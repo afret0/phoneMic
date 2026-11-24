@@ -1,0 +1,34 @@
+# phoneMic
+
+手机浏览器当电脑无线麦克风：手机网页采集 → WSS 推 PCM → 电脑端 Go 单二进制写入虚拟声卡（macOS BlackHole / Windows VB-Cable），任何 App 把它选作麦克风即可收音。无 wheel 依赖的独立跨平台仓库，不适用 keke 系框架先例。
+
+## 构建与验证
+
+- **本机全局 `go env CGO_ENABLED=0`**：所有 go build/test/vet 必须显式前缀 `CGO_ENABLED=1`，否则 malgo 符号全部 undefined。
+- 测试与 mac 构建：`CGO_ENABLED=1 go test ./...`、`CGO_ENABLED=1 go build -o phone_mic ./cmd/phone_mic`（malgo 走 cgo，需 Xcode CLT）。
+- Windows 交叉编译（本机验证用）：`CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc go build -o phone_mic.exe ./cmd/phone_mic`；mingw-w64 由 brew 安装（免 sudo；ghcr.io 被限速/断流时用 `HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles`）。
+- 运行：`./phone_mic`（HTTPS :8443 手机页面/WS，HTTP :8080 仅 CA 下载与跳转）；`--list-devices` 列输出设备；`--device <substr>` 指定输出设备；`--install-driver` / `--uninstall-driver` 安装/卸载虚拟声卡（都会弹系统管理员授权）。
+- 首次使用顺序：`--install-driver`（mac 装 BlackHole2ch，win 装 VB-Cable）→ **mac 需重启电脑**（见下）→ 启动 → 手机浏览器装页面引导里的 CA 证书 → 打开 `https://<局域网IP>:8443` 开始推流 → 会议 App 麦克风选虚拟声卡。
+
+## 已踩过的坑（验证过的事实）
+
+- **SIP 禁止重启 coreaudiod**（`launchctl kickstart -k system/com.apple.audio.coreaudiod` 报 error 150）：BlackHole pkg 装完文件在 `/Library/Audio/Plug-Ins/HAL/` 但设备列表不出现，**必须重启电脑**；卸载同理。代码已按此设计：装后轮询设备枚举，未加载则明确提示重启，不尝试 kickstart。
+- **existential.audio 拦 Go 默认 UA 返回 406**：下载驱动资源必须带浏览器 User-Agent（internal/driver 已内置）。
+- BlackHole 的 GitHub release 无 assets，官方 pkg 只能从 brew cask API json 拿 URL+sha256。
+- 集成浏览器/Chrome 不信任自签 CA（ERR_CERT_AUTHORITY_INVALID，无"继续"入口）。**无声全链路 UI 验证法**：临时把 player.go 两处 `malgo.InitContext(nil,…)` 改成 `[]malgo.Backend{malgo.BackendNull}` → 构建 /tmp 测试二进制（设备名 "NULL Playback Device"）→ **立刻还原源码再构建正式二进制**；用 playwright-core 驱动系统 Chrome（`ignoreHTTPSErrors: true` + `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream --mute-audio`）点 `#micBtn`、断言 `/status` 的 sessionFrames/writtenBytes/bufferedMs。
+- 手机页面（web/static/index.html）元素 id：`micBtn/btnLabel/pill/state/dur/viz/db/device/buffered/sent/rate/setup`（details 手风琴）。
+
+## 手机页 UI 设计系统（ui-ux-pro-max 推荐 + 用户确认重做）
+
+- OLED 暗夜风：bg `#0F0F23`、card `#1B1B30`、primary 靛蓝 `#4338CA`、推流绿 `#22C55E`、danger `#EF4444`、fg `#F8FAFC`、muted `#94A3B8`。
+- **零外链**：不用 CDN 字体（局域网产品必须离线可用，Google Fonts 国内不可达且阻塞渲染），字体走系统栈；favicon 是内联 SVG data URI。图标一律内联 SVG，禁 emoji。
+- 电平链路：worklet 每帧 postMessage `{pcm, level(RMS)}` → 页面 `pushLevel` 指数平滑（0.7/0.3）驱动 `--level` CSS 变量（按钮光环）、canvas 64 条滚动电平条、dB 读数；**dB 必须用平滑值**（瞬时值会在静音帧闪 `--`，与光环不一致）。
+- 触控 ≥44px、focus-visible、prefers-reduced-motion、320px 无横向溢出（均已 Playwright 验证）。
+
+## 契约（改动前必读，均已与用户确认）
+
+- 音频线上格式：48000Hz 单声道 Int16 LE 裸 PCM，WSS 二进制帧；无协议头。
+- 单路推流：新 WS 连接进来即踢旧连接（close 4001）；抖动缓冲目标 100ms、上限 300ms 超限丢最旧。
+- 证书：程序内置自签 CA（certs/ 目录持久化，SAN 含全部本机非回环 IP），HTTP :8080/ca.crt 供手机安装；不依赖 mkcert/caddy。
+- 虚拟声卡名匹配：mac 找 "BlackHole"，win 找 "VB-Cable"/"CABLE Output"；找不到报错并提示 --install-driver，绝不静默落到扬声器（会啸叫）。
+- 驱动安装源：mac 用 brew cask API（formulae.brew.sh/api/cask/blackhole-2ch.json）取官方 pkg URL+sha256 校验后 installer 安装（卸载=删 /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver；装/卸后均需重启电脑生效）；win 用 vb-audio 官方 VBCABLE_Driver_Pack zip，UAC 提权跑官方 setup。

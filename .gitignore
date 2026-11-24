@@ -1,0 +1,5 @@
+/phone_mic
+/phone_mic.exe
+certs/
+*.exe
+.DS_Store

@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0F0F23">
+<title>phoneMic · 手机麦克风</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%231B1B30'/%3E%3Crect x='25' y='12' width='14' height='26' rx='7' fill='%2322C55E'/%3E%3Cpath d='M18 30v2a14 14 0 0 0 28 0v-2' fill='none' stroke='%2322C55E' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M32 46v8' stroke='%2322C55E' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #0F0F23;
+  --card: #1B1B30;
+  --muted: #27273B;
+  --border: #312E81;
+  --fg: #F8FAFC;
+  --muted-fg: #94A3B8;
+  --primary: #1E1B4B;
+  --secondary: #4338CA;
+  --accent: #22C55E;
+  --on-accent: #0F172A;
+  --danger: #EF4444;
+  --ring: #FFFFFF;
+  --level: 0;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: -apple-system, "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", system-ui, sans-serif;
+  background:
+    radial-gradient(60% 40% at 50% 0%, rgba(67, 56, 202, 0.16), transparent 70%),
+    var(--bg);
+  color: var(--fg);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px calc(28px + env(safe-area-inset-bottom));
+  font-size: 16px;
+  line-height: 1.5;
+}
+.wrap { width: 100%; max-width: 460px; display: flex; flex-direction: column; align-items: center; }
+
+header { display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 6px; }
+.logo {
+  width: 38px; height: 38px; border-radius: 11px; flex: none;
+  background: linear-gradient(135deg, var(--secondary), var(--primary));
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  display: grid; place-items: center;
+  box-shadow: 0 0 18px rgba(67, 56, 202, 0.35);
+}
+.logo svg { width: 20px; height: 20px; stroke: var(--fg); }
+.brand { font-size: 19px; font-weight: 700; letter-spacing: 0.2px; }
+.tagline { font-size: 12.5px; color: var(--muted-fg); }
+
+.hero { display: flex; flex-direction: column; align-items: center; margin: 26px 0 18px; }
+#micBtn {
+  position: relative;
+  width: 116px; height: 116px; border-radius: 50%;
+  border: 1px solid rgba(99, 102, 241, 0.55);
+  background: radial-gradient(circle at 32% 28%, #5B54D6, var(--secondary) 45%, var(--primary));
+  cursor: pointer;
+  display: grid; place-items: center;
+  transition: transform 120ms ease, box-shadow 250ms ease, background 250ms ease, border-color 250ms ease;
+  box-shadow: 0 10px 34px rgba(30, 27, 75, 0.85), 0 0 22px rgba(67, 56, 202, 0.28);
+  -webkit-tap-highlight-color: transparent;
+}
+#micBtn:active { transform: scale(0.96); }
+#micBtn:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+#micBtn svg { width: 44px; height: 44px; stroke: var(--fg); transition: stroke 250ms ease; }
+#micBtn .stopIcon { display: none; }
+#micBtn.live {
+  background: radial-gradient(circle at 32% 28%, #4ADE80, var(--accent) 50%, #15803D);
+  border-color: rgba(74, 222, 128, 0.6);
+  box-shadow: 0 10px 34px rgba(21, 128, 61, 0.5), 0 0 calc(26px + var(--level) * 46px) rgba(34, 197, 94, calc(0.3 + var(--level) * 0.45));
+}
+#micBtn.live svg { stroke: var(--on-accent); }
+#micBtn.live .micIcon { display: none; }
+#micBtn.live .stopIcon { display: block; }
+#micBtn.starting svg { display: none; }
+#micBtn.starting .spinner { display: block; }
+.spinner {
+  display: none; width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid rgba(248, 250, 252, 0.25); border-top-color: var(--fg);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.ring { position: absolute; inset: -1px; border-radius: 50%; border: 1.5px solid rgba(34, 197, 94, 0.55); opacity: 0; pointer-events: none; }
+#micBtn.live .ring { animation: pulse 2.2s ease-out infinite; }
+#micBtn.live .ring.r2 { animation-delay: 1.1s; }
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+#btnLabel { margin-top: 14px; font-size: 14px; color: var(--muted-fg); font-weight: 500; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--card); border: 1px solid var(--muted);
+  border-radius: 999px; padding: 7px 14px;
+  font-size: 13px; font-weight: 500; color: var(--muted-fg);
+  margin-bottom: 18px;
+}
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748B; flex: none; }
+.pill.connecting .dot { background: #F59E0B; animation: blink 1s ease-in-out infinite; }
+.pill.live { color: var(--fg); border-color: rgba(34, 197, 94, 0.4); }
+.pill.live .dot { background: var(--accent); box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); animation: blink 1.6s ease-in-out infinite; }
+.pill.dead .dot { background: var(--danger); }
+@keyframes blink { 50% { opacity: 0.35; } }
+.pill .time { font-variant-numeric: tabular-nums; color: var(--muted-fg); }
+
+.card {
+  width: 100%; background: var(--card);
+  border: 1px solid var(--muted);
+  border-radius: 16px; padding: 14px; margin-bottom: 12px;
+}
+.vizHead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.vizHead .label { font-size: 12px; font-weight: 600; letter-spacing: 0.6px; color: var(--muted-fg); text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.vizHead .label svg { width: 14px; height: 14px; stroke: var(--muted-fg); }
+#db { font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+#viz { width: 100%; height: 92px; display: block; }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-bottom: 12px; }
+.tile { background: var(--card); border: 1px solid var(--muted); border-radius: 14px; padding: 11px 13px; min-width: 0; }
+.tile .k { font-size: 11.5px; color: var(--muted-fg); font-weight: 500; letter-spacing: 0.3px; margin-bottom: 3px; display: flex; align-items: center; gap: 5px; }
+.tile .k svg { width: 13px; height: 13px; stroke: var(--muted-fg); flex: none; }
+.tile .v { font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+#err {
+  width: 100%; display: none; align-items: flex-start; gap: 10px;
+  background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 14px; padding: 12px 12px 12px 14px; margin-bottom: 12px;
+  font-size: 13.5px; color: #FCA5A5; white-space: pre-wrap; word-break: break-word;
+}
+#err svg { width: 18px; height: 18px; stroke: var(--danger); flex: none; margin-top: 2px; }
+#errClose { background: none; border: none; cursor: pointer; padding: 6px; margin: -4px -4px 0 0; flex: none; border-radius: 8px; }
+#errClose:focus-visible { outline: 2px solid var(--ring); }
+#errClose svg { width: 14px; height: 14px; stroke: var(--muted-fg); margin: 0; }
+
+details.card { padding: 0; }
+summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  padding: 14px; font-size: 14px; font-weight: 600; border-radius: 16px;
+}
+summary::-webkit-details-marker { display: none; }
+summary:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+summary .badge {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
+  background: rgba(67, 56, 202, 0.35); color: #A5B4FC;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  padding: 2px 8px; border-radius: 999px; flex: none;
+}
+summary .chev { margin-left: auto; width: 16px; height: 16px; stroke: var(--muted-fg); transition: transform 200ms ease; flex: none; }
+details[open] summary .chev { transform: rotate(180deg); }
+.steps { padding: 0 16px 16px; counter-reset: step; }
+.steps li { list-style: none; position: relative; padding: 0 0 14px 34px; font-size: 13.5px; color: var(--muted-fg); }
+.steps li:last-child { padding-bottom: 2px; }
+.steps li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 0; top: 1px;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--primary); border: 1px solid rgba(99, 102, 241, 0.5);
+  color: #A5B4FC; font-size: 12px; font-weight: 700;
+  display: grid; place-items: center;
+}
+.steps b { color: var(--fg); font-weight: 600; }
+#caLink {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 8px;
+  background: rgba(34, 197, 94, 0.12); color: var(--accent);
+  border: 1px solid rgba(34, 197, 94, 0.45); border-radius: 10px;
+  padding: 9px 14px; font-size: 13.5px; font-weight: 600; text-decoration: none;
+  transition: background 150ms ease; cursor: pointer;
+}
+#caLink:hover { background: rgba(34, 197, 94, 0.2); }
+#caLink:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+#caLink svg { width: 15px; height: 15px; stroke: var(--accent); }
+
+footer { margin-top: 6px; font-size: 11.5px; color: #64748B; text-align: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+    </div>
+    <div>
+      <div class="brand">phoneMic</div>
+      <div class="tagline">这台手机，就是电脑的无线麦克风</div>
+    </div>
+  </header>
+
+  <div class="hero">
+    <button id="micBtn" aria-pressed="false" aria-label="开始麦克风">
+      <span class="ring" aria-hidden="true"></span>
+      <span class="ring r2" aria-hidden="true"></span>
+      <svg class="micIcon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+      <svg class="stopIcon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      <span class="spinner" aria-hidden="true"></span>
+    </button>
+    <div id="btnLabel">点击开始收音</div>
+  </div>
+
+  <div class="pill" id="pill" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <span id="state">未连接</span>
+    <span class="time" id="dur"></span>
+  </div>
+
+  <div id="err" role="alert">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+    <span id="errText"></span>
+    <button id="errClose" aria-label="关闭提示">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+    </button>
+  </div>
+
+  <div class="card">
+    <div class="vizHead">
+      <span class="label">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        输入电平
+      </span>
+      <span id="db">-- dB</span>
+    </div>
+    <canvas id="viz" aria-hidden="true"></canvas>
+  </div>
+
+  <div class="stats">
+    <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>电脑输出设备</div><div class="v" id="device">-</div></div>
+    <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>电脑缓冲</div><div class="v" id="buffered">-</div></div>
+    <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><path d="M12 20h.01"/></svg>已发送</div><div class="v" id="sent">0 KB</div></div>
+    <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/></svg>采样率</div><div class="v" id="rate">48 kHz</div></div>
+  </div>
+
+  <details class="card" id="setup">
+    <summary>
+      <span class="badge">首次使用</span>
+      安装证书 · 3 步搞定
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </summary>
+    <ol class="steps">
+      <li>用本手机下载并安装 CA 证书（不装证书浏览器不给用麦克风）<br>
+        <a id="caLink" href="#">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          下载 CA 证书
+        </a>
+      </li>
+      <li>安卓：<b>设置 → 安全 → 更多安全设置 → 加密与凭据 → 安装证书 → CA 证书</b> → 仍要安装 → 选中刚下载的文件，装完回本页刷新</li>
+      <li>点上方大按钮开始收音；电脑上的会议 / 聊天软件把<b>麦克风</b>选为虚拟声卡（mac: BlackHole 2ch / win: CABLE Output）</li>
+    </ol>
+  </details>
+
+  <footer>局域网直连 · 音频不出内网 · 48 kHz 单声道</footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const micBtn = $('micBtn'), btnLabel = $('btnLabel'), pill = $('pill'), stateEl = $('state'), durEl = $('dur');
+const errBox = $('err'), errText = $('errText');
+const canvas = $('viz'), cx = canvas.getContext('2d');
+let ws = null, ctx = null, stream = null, node = null, wakeLock = null;
+let sentBytes = 0, running = false, startTs = 0;
+let levels = new Array(64).fill(0), curLevel = 0, rafId = 0;
+
+$('caLink').href = 'http://' + location.hostname + ':8080/ca.crt';
+$('errClose').onclick = () => { errBox.style.display = 'none'; };
+
+function showErr(msg) { errText.textContent = msg; errBox.style.display = 'flex'; }
+function clearErr() { errBox.style.display = 'none'; }
+function setPill(cls, text) { pill.className = 'pill' + (cls ? ' ' + cls : ''); stateEl.textContent = text; }
+
+function fitCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
+function draw() {
+  const w = canvas.clientWidth, h = canvas.clientHeight, mid = h / 2;
+  cx.clearRect(0, 0, w, h);
+  const n = levels.length, gap = 2, bw = Math.max(2, (w - gap * (n - 1)) / n);
+  for (let i = 0; i < n; i++) {
+    const v = levels[i];
+    const amp = Math.max(0.02, Math.pow(v, 0.7));
+    const bh = amp * (h - 8);
+    const x = i * (bw + gap);
+    const hot = v > 0.25;
+    cx.fillStyle = hot ? '#22C55E' : (running ? '#4338CA' : '#27273B');
+    if (hot) { cx.shadowColor = 'rgba(34,197,94,0.7)'; cx.shadowBlur = 8; } else { cx.shadowBlur = 0; }
+    cx.beginPath();
+    cx.roundRect(x, mid - bh / 2, bw, bh, bw / 2);
+    cx.fill();
+  }
+  cx.shadowBlur = 0;
+  rafId = requestAnimationFrame(draw);
+}
+rafId = requestAnimationFrame(draw);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { cancelAnimationFrame(rafId); rafId = 0; }
+  else if (!rafId) { rafId = requestAnimationFrame(draw); }
+});
+
+function pushLevel(v) {
+  levels.shift(); levels.push(v);
+  curLevel = curLevel * 0.7 + v * 0.3;
+  document.documentElement.style.setProperty('--level', Math.min(1, curLevel * 2.2).toFixed(3));
+  const db = curLevel > 0.0001 ? (20 * Math.log10(curLevel)).toFixed(0) : '--';
+  $('db').textContent = db + ' dB';
+}
+
+async function pollStatus() {
+  try {
+    const r = await fetch('/status');
+    const s = await r.json();
+    const dev = $('device');
+    dev.textContent = s.device || '-';
+    dev.title = s.device || '';
+    $('buffered').textContent = s.bufferedMs + ' ms';
+  } catch (e) {}
+}
+pollStatus();
+setInterval(pollStatus, 3000);
+setInterval(() => {
+  $('sent').textContent = sentBytes > 1048576 ? (sentBytes / 1048576).toFixed(1) + ' MB' : (sentBytes / 1024).toFixed(0) + ' KB';
+  if (running) {
+    const s = Math.floor((Date.now() - startTs) / 1000);
+    durEl.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  } else durEl.textContent = '';
+}, 500);
+
+async function start() {
+  clearErr();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showErr('当前环境无法访问麦克风：请先按下方引导安装证书，并用 https 地址打开本页。');
+    $('setup').open = true;
+    return;
+  }
+  micBtn.classList.add('starting');
+  micBtn.setAttribute('aria-busy', 'true');
+  setPill('connecting', '连接中');
+  btnLabel.textContent = '正在请求麦克风权限…';
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    ctx = new AudioContext();
+    await ctx.audioWorklet.addModule('/worklet.js');
+    $('rate').textContent = ctx.sampleRate === 48000 ? '48 kHz' : (ctx.sampleRate / 1000).toFixed(1) + ' → 48 kHz';
+
+    ws = new WebSocket('wss://' + location.host + '/ws');
+    ws.binaryType = 'arraybuffer';
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error('WebSocket 连接失败')); });
+
+    node = new AudioWorkletNode(ctx, 'pcm-processor');
+    node.port.onmessage = ev => {
+      const { pcm, level } = ev.data;
+      pushLevel(level);
+      if (!ws || ws.readyState !== 1) return;
+      if (ws.bufferedAmount > 256 * 1024) return;
+      ws.send(pcm);
+      sentBytes += pcm.byteLength;
+    };
+    ctx.createMediaStreamSource(stream).connect(node);
+
+    ws.onclose = ev => {
+      if (running) {
+        stop();
+        setPill('dead', '已断开');
+        showErr(ev.code === 4001 ? '已被新的推流设备替换。' : '与电脑的连接断开（code ' + ev.code + '），请重新开始。');
+      }
+    };
+
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+    if (navigator.vibrate) navigator.vibrate(10);
+
+    running = true;
+    startTs = Date.now();
+    micBtn.classList.remove('starting');
+    micBtn.removeAttribute('aria-busy');
+    micBtn.classList.add('live');
+    micBtn.setAttribute('aria-pressed', 'true');
+    micBtn.setAttribute('aria-label', '停止麦克风');
+    setPill('live', '推流中');
+    btnLabel.textContent = '正在收音 · 点击停止';
+  } catch (e) {
+    stop();
+    micBtn.classList.remove('starting');
+    micBtn.removeAttribute('aria-busy');
+    let msg = '启动失败：' + (e.message || e.name);
+    if (e.name === 'NotAllowedError') msg = '麦克风权限被拒绝：请在浏览器设置里允许本页使用麦克风后重试。';
+    if (e.name === 'NotFoundError') msg = '未检测到麦克风设备。';
+    showErr(msg + '\n若是证书问题，请按下方引导安装证书后刷新重试。');
+    $('setup').open = true;
+  }
+}
+
+function stop() {
+  running = false;
+  if (node) { node.disconnect(); node.port.onmessage = null; node = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (ctx) { ctx.close(); ctx = null; }
+  if (ws) { const w = ws; ws = null; w.onclose = null; try { w.close(1000); } catch (e) {} }
+  if (wakeLock) { wakeLock.release(); wakeLock = null; }
+  levels = new Array(64).fill(0);
+  document.documentElement.style.setProperty('--level', '0');
+  $('db').textContent = '-- dB';
+  micBtn.classList.remove('live');
+  micBtn.setAttribute('aria-pressed', 'false');
+  micBtn.setAttribute('aria-label', '开始麦克风');
+  setPill('', '未连接');
+  btnLabel.textContent = '点击开始收音';
+}
+
+micBtn.onclick = () => { if (!micBtn.classList.contains('starting')) running ? stop() : start(); };
+
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && running) {
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+});
+</script>
+</body>
+</html>
