@@ -111,6 +111,10 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 	go s.statsLoop(ctx)
 
+	if mdnsEntry := s.registerMDNS(); mdnsEntry != nil {
+		defer mdnsEntry.Shutdown()
+	}
+
 	select {
 	case err := <-errCh:
 		_ = httpsSrv.Close()

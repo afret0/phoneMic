@@ -3,3 +3,9 @@
 certs/
 *.exe
 .DS_Store
+android/.gradle/
+android/build/
+android/app/build/
+android/app/bin/
+android/local.properties
+*.apk

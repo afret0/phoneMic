@@ -25,6 +25,18 @@
 - 电平链路：worklet 每帧 postMessage `{pcm, level(RMS)}` → 页面 `pushLevel` 指数平滑（0.7/0.3）驱动 `--level` CSS 变量（按钮光环）、canvas 64 条滚动电平条、dB 读数；**dB 必须用平滑值**（瞬时值会在静音帧闪 `--`，与光环不一致）。
 - 触控 ≥44px、focus-visible、prefers-reduced-motion、320px 无横向溢出（均已 Playwright 验证）。
 
+## Android app（android/，Kotlin + Compose，与网页同契约）
+
+- 构建必须 JDK21：`cd android && export JAVA_HOME=/Users/afreto/Library/Java/JavaVirtualMachines/corretto-21.0.3/Contents/Home && ./gradlew :app:assembleDebug :app:testDebugUnitTest`（系统 Gradle 9.2.1 默认 JVM25 与 wrapper 8.14.3 不兼容）。APK 在 `android/app/build/outputs/apk/debug/app-debug.apk`；Compose 依赖本机未缓存，settings.gradle.kts 已配阿里云镜像优先。
+- 信任模型 TOFU：首连 https 探测失败 → 从 mDNS TXT 的 http 端口取 `/ca.crt` → `PinnedCaTrustManager` 校验后存 prefs `ca_store`（key `ca_<host>`）→ 重建 client。**已固定 CA 时探测失败分流**：SSLException（证书换了）才重走 TOFU；连接类失败（ConnectException 等）直接用固定 client 让 WS 自然重试，不重取 CA。
+- 重连：退避 `1s shl (attempt-1)` 封顶 30s；被踢 code 4001 是终态不重连；连接成功 attempt 归零。
+- **Resampler 必须用整数相位累加**（posUnits 以 1/48000 采样为单位，`floorDiv`/`Math.floorMod`）：浮点 pos 跨 chunk 边界会因累加量级不同漂移出 1 LSB 差异，"任意分块输出逐位一致"是单测守住的不变量（resampler_test.kt）。
+- **MuMu 模拟器特性（adb 127.0.0.1:16384，Android 12 横屏 1920×1080，已实测）**：
+  - 默认平台 TLS 信任被放宽：自签证书直接过、`handshake.peerCertificates` 为空 → 全新安装不触发 TOFU 属正常；**自定义 TrustManager（pinning）不受影响**，三条信任路径（固定拒绝/TOFU 固定/固定接受）已用 prefs 注入法全部真机验证。
+  - NsdManager 发现启动失败 code 0（NAT 网络），用手动输 IP 兜底；Go 端 mDNS 广播本身正常（Mac `dns-sd -B _phonemic._tcp local.` 可见）。
+  - adb UI 自动化：每次 tap 前必须 `exec-out screencap -p` 核对坐标（按钮位置随页面状态/滚动变化）；`pm grant com.afret0.phonemic android.permission.RECORD_AUDIO` 免弹窗；日志 `logcat -d -s CaStore:* MicEngine:*`；debug 包可 `run-as` 读写 shared_prefs（注入 ca_store.xml 可模拟证书更换）。
+  - 模拟器麦克风采零（电平恒 0）属正常，音质/息屏推流需真机验证。
+
 ## 契约（改动前必读，均已与用户确认）
 
 - 音频线上格式：48000Hz 单声道 Int16 LE 裸 PCM，WSS 二进制帧；无协议头。
