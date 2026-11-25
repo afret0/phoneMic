@@ -21,9 +21,22 @@
 ## 手机页 UI 设计系统（ui-ux-pro-max 推荐 + 用户确认重做）
 
 - OLED 暗夜风：bg `#0F0F23`、card `#1B1B30`、primary 靛蓝 `#4338CA`、推流绿 `#22C55E`、danger `#EF4444`、fg `#F8FAFC`、muted `#94A3B8`。
-- **零外链**：不用 CDN 字体（局域网产品必须离线可用，Google Fonts 国内不可达且阻塞渲染），字体走系统栈；favicon 是内联 SVG data URI。图标一律内联 SVG，禁 emoji。
+- **零外链**：不用 CDN 字体（局域网产品必须离线可用，Google Fonts 国内不可达且阻塞渲染），字体走系统栈。页面内功能图标一律内联 SVG，禁 emoji；favicon/apple-touch-icon 是 web/static 下的 PNG 文件（见「品牌图标」）。
 - 电平链路：worklet 每帧 postMessage `{pcm, level(RMS)}` → 页面 `pushLevel` 指数平滑（0.7/0.3）驱动 `--level` CSS 变量（按钮光环）、canvas 64 条滚动电平条、dB 读数；**dB 必须用平滑值**（瞬时值会在静音帧闪 `--`，与光环不一致）。
 - 触控 ≥44px、focus-visible、prefers-reduced-motion、320px 无横向溢出（均已 Playwright 验证）。
+
+## 品牌图标（2026-11-25 用户逐轮确认：像素风手机角色 + V1 渐变边框）
+
+- 唯一源图 `assets/logo.png`（1024，透明圆角外框）；角色 = 像素手机（绿屏笑脸+电平条+无线电波），最外圈靛蓝→绿渐变像素边框（用户为解决「暗底图标在 dock 里显小」加的）。合成参数：边框 inset 5.9%、暗面板圆角 16.6%、内容占宽 76%、画内底色 `#07071E`（AI 原图底色，非页面 bg #0F0F23，勿混用）。
+- Android：`mipmap-{m,h,xh,xxh,xxxh}dpi/ic_launcher(.png/_round.png)` 全密度 + `mipmap-anydpi-v26` 自适应。**自适应分层是刻意的**：边框=背景层（`drawable-nodpi/ic_launcher_background.png` 渐变），暗面板+角色=前景层（角色内容≤56% 画幅，适配 66/108 安全区）——这样任何 launcher 蒙版下边框都贴图标外缘；若把带边框整图当前景，边框会被蒙版裁掉。monochrome 用 `drawable/ic_launcher_monochrome.xml`（108 viewport + group translate 22 收进安全区）；通知小图标是独立的白色线稿 `drawable/ic_notification.xml`（全彩 launcher 图不可当 smallIcon）。
+- 网页：`web/static/favicon.png`(64) + `apple-touch-icon.png`(180)，由既有 FileServer 直出，index.html 用 `<link>` 引用。
+- 图像处理环境：`~/.copilot/tools/imgenv/bin/python`（venv + pillow，系统 python3 无 PIL）。改图标一律从 assets/logo.png 派生各尺寸，勿再逐尺寸手改。
+- 纯静态/favicon 验证不必碰音频：BlackHole 未加载时正式二进制起不来（先开设备后开 HTTP），可在会话目录建临时 go module（replace 指向本仓库）只 serve `web.StaticFS()` 后 curl。
+
+## 版本与交付惯例
+
+- 用户可感知改动：`android/app/build.gradle.kts` 的 `versionName` 末位 +1、`versionCode` +1；commit message 沿用 `<versionName>: 中文描述`。
+- 产物拷 `~/Downloads` 统一命名：`phoneMic_<ver>_android_debug.apk` / `phoneMic_<ver>_mac_arm64` / `phoneMic_<ver>_win_x64.exe`；仓库根 phone_mic / phone_mic.exe 已被 .gitignore（本地构建产物，不入库）。
 
 ## Android app（android/，Kotlin + Compose，与网页同契约）
 
@@ -31,7 +44,7 @@
 - 信任模型 TOFU：首连 https 探测失败 → 从 mDNS TXT 的 http 端口取 `/ca.crt` → `PinnedCaTrustManager` 校验后存 prefs `ca_store`（key `ca_<host>`）→ 重建 client。**已固定 CA 时探测失败分流**：SSLException（证书换了）才重走 TOFU；连接类失败（ConnectException 等）直接用固定 client 让 WS 自然重试，不重取 CA。
 - 重连：退避 `1s shl (attempt-1)` 封顶 30s；被踢 code 4001 是终态不重连；连接成功 attempt 归零。
 - **Resampler 必须用整数相位累加**（posUnits 以 1/48000 采样为单位，`floorDiv`/`Math.floorMod`）：浮点 pos 跨 chunk 边界会因累加量级不同漂移出 1 LSB 差异，"任意分块输出逐位一致"是单测守住的不变量（resampler_test.kt）。
-- **MuMu 模拟器特性（adb 127.0.0.1:16384，Android 12 横屏 1920×1080，已实测）**：
+- **MuMu 模拟器特性（adb 127.0.0.1:16384/16448，端口以 `adb devices` 实测为准；Android 12，已实测）**：
   - 默认平台 TLS 信任被放宽：自签证书直接过、`handshake.peerCertificates` 为空 → 全新安装不触发 TOFU 属正常；**自定义 TrustManager（pinning）不受影响**，三条信任路径（固定拒绝/TOFU 固定/固定接受）已用 prefs 注入法全部真机验证。
   - NsdManager 发现启动失败 code 0（NAT 网络），用手动输 IP 兜底；Go 端 mDNS 广播本身正常（Mac `dns-sd -B _phonemic._tcp local.` 可见）。
   - adb UI 自动化：每次 tap 前必须 `exec-out screencap -p` 核对坐标（按钮位置随页面状态/滚动变化）；`pm grant com.afret0.phonemic android.permission.RECORD_AUDIO` 免弹窗；日志 `logcat -d -s CaStore:* MicEngine:*`；debug 包可 `run-as` 读写 shared_prefs（注入 ca_store.xml 可模拟证书更换）。
