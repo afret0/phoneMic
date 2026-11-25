@@ -18,7 +18,7 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-const Version = "0.1.2"
+const Version = "0.1.3"
 
 type DeviceView struct {
 	Current string `json:"current"`
@@ -85,6 +85,7 @@ func (a *App) bindings() map[string]any {
 		"ListDevices":     a.listDevices,
 		"InstallDriver":   a.installDriver,
 		"UninstallDriver": a.uninstallDriver,
+		"UpdateDriver":    a.updateDriver,
 		"SwitchDevice":    a.switchDevice,
 		"QR":              a.qr,
 		"QuitApp":         func() { a.Quit() },
@@ -124,6 +125,7 @@ func (a *App) listDevices() ([]audio.OutputDevice, error) {
 
 func (a *App) installDriver() bool   { return a.mgr.TriggerInstall() }
 func (a *App) uninstallDriver() bool { return a.mgr.TriggerUninstall() }
+func (a *App) updateDriver() bool    { return a.mgr.TriggerUpdate() }
 
 func (a *App) switchDevice(name string) error {
 	a.connectMu.Lock()

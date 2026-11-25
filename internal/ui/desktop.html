@@ -164,21 +164,23 @@ footer .btn { margin-left: auto; }
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
       <span class="label">虚拟声卡</span>
     </div>
-    <div class="row">
-      <div class="status" id="drvStatus"><span class="dot"></span><span id="drvText">检测中</span></div>
-      <div class="row" style="margin-left:auto">
-        <button class="btn primary" id="btnInstall">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          安装
-        </button>
-        <button class="btn danger" id="btnUninstall">
-          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          卸载
-        </button>
-      </div>
-    </div>
+    <div class="status" id="drvStatus"><span class="dot"></span><span id="drvText">检测中</span></div>
     <div class="hint" id="drvHint"></div>
     <div class="banner" id="drvBanner"></div>
+    <div class="row" style="margin-top:10px; justify-content:flex-end">
+      <button class="btn primary" id="btnInstall">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        安装
+      </button>
+      <button class="btn" id="btnUpdate" title="从官网下载最新驱动包覆盖安装">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        更新驱动
+      </button>
+      <button class="btn danger" id="btnUninstall">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        卸载
+      </button>
+    </div>
   </div>
 
   <div class="card">
@@ -303,11 +305,12 @@ footer .btn { margin-left: auto; }
     const st = $('drvStatus'), tx = $('drvText');
     let cls = '', text = '', hint = '';
     if (d.busy && d.op === 'install') { cls = 'busy'; text = '正在安装,请在电脑上确认授权弹窗'; }
+    else if (d.busy && d.op === 'update') { cls = 'busy'; text = '正在更新,下载官网最新包中,请留意授权弹窗'; }
     else if (d.busy && d.op === 'uninstall') { cls = 'busy'; text = '正在卸载,请在电脑上确认授权弹窗'; }
     else if (d.installed && d.loaded) { cls = 'ok'; text = '已安装并加载'; hint = '会议/聊天 App 的麦克风请选 ' + micName; }
     else if (d.installed && !d.loaded) { cls = 'warn'; text = '已安装,设备未加载'; hint = '需要重启电脑后虚拟声卡才会出现在设备列表'; }
     else if (!d.installed && d.loaded) { cls = 'warn'; text = '已卸载,重启后生效'; hint = '重启电脑后设备列表才会移除它'; }
-    else { cls = 'bad'; text = '未安装'; hint = '点「安装」下载官方驱动包,安装时需确认系统授权弹窗'; }
+    else { cls = 'bad'; text = '未安装'; hint = '点「安装」使用程序内置的官方驱动包,安装时需确认系统授权弹窗'; }
     st.className = 'status ' + cls;
     tx.textContent = text;
     $('drvHint').textContent = hint;
@@ -318,14 +321,15 @@ footer .btn { margin-left: auto; }
     else { banner.className = 'banner'; banner.textContent = ''; }
 
     $('btnInstall').disabled = d.busy || d.installed;
+    $('btnUpdate').disabled = d.busy || !d.installed;
     $('btnUninstall').disabled = d.busy || !d.installed;
 
     const key = [d.busy, d.op, d.installed, d.loaded].join('|');
     if (key !== lastDrvKey) {
-      const prevBusy = lastDrvKey !== '' && lastDrvKey.split('|')[0] === 'true';
-      if (prevBusy && !d.busy) {
+      const prev = lastDrvKey.split('|');
+      if (prev[0] === 'true' && !d.busy) {
         refreshDevices();
-        if (!d.lastError) toast(d.installed ? '驱动安装完成' : '驱动已卸载');
+        if (!d.lastError) toast(prev[1] === 'update' ? '驱动已更新到官网最新版' : (d.installed ? '驱动安装完成' : '驱动已卸载'));
       }
       if (lastDrvKey !== '') refreshDevices();
       lastDrvKey = key;
@@ -364,7 +368,8 @@ footer .btn { margin-left: auto; }
       el.innerHTML = '<span class="none">未连接输出设备(等待驱动安装或手动选择)</span>';
       $('spkWarn').className = 'banner';
     }
-    if (devicesLoaded && !busyUI && document.activeElement !== sel) {
+    if (devicesLoaded && !busyUI && document.activeElement !== $('devSelect')) {
+      const sel = $('devSelect');
       const isDefault = dev.match && dev.match.toLowerCase() === virtualDefault;
       const want = dev.match && !isDefault ? dev.current : '';
       for (const o of sel.options) { if (o.value === want) { sel.value = want; break; } }
@@ -444,6 +449,13 @@ footer .btn { margin-left: auto; }
       const ok = await window.UninstallDriver();
       toast(ok ? '开始卸载,请留意电脑上的授权弹窗' : '已有操作进行中', !ok);
     } catch (e) { toast('触发卸载失败: ' + e, true); }
+    poll();
+  };
+  $('btnUpdate').onclick = async () => {
+    try {
+      const ok = await window.UpdateDriver();
+      toast(ok ? '开始更新,需下载官网最新包,请留意授权弹窗' : '已有操作进行中', !ok);
+    } catch (e) { toast('触发更新失败: ' + e, true); }
     poll();
   };
   $('btnRefresh').onclick = () => refreshDevices($('devSelect').value);

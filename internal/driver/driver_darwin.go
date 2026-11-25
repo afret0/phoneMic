@@ -47,7 +47,15 @@ func Install() error {
 		slog.Info("skip, BlackHole 已安装, 无需重复安装", "path", driverPath)
 		return nil
 	}
+	return installLatest()
+}
 
+func Update() error {
+	slog.Info("recv, 更新 BlackHole 到官网最新版")
+	return installLatest()
+}
+
+func installLatest() error {
 	body, err := fetchText(caskAPIURL)
 	if err != nil {
 		return fmt.Errorf("获取 BlackHole 最新版本信息失败: %w", err)

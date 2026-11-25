@@ -2,6 +2,7 @@ package driver
 
 import (
 	"archive/zip"
+	_ "embed"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/afret0/phoneMic/internal/audio"
 )
+
+//go:embed assets/vbcable_win_x64.zip
+var bundledCablePack []byte
 
 const (
 	DefaultMatch     = "cable input"
@@ -56,13 +60,13 @@ func Install() error {
 		slog.Info("skip, VB-Cable 已安装, 无需重复安装")
 		return nil
 	}
-	setupPath, cleanup, err := fetchSetup()
+	setupPath, cleanup, err := bundledSetup()
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	slog.Info("recv, 请求管理员授权安装 VB-Cable, 请在 UAC 弹窗确认")
+	slog.Info("recv, 请求管理员授权安装 VB-Cable(程序内置官方驱动包), 请在 UAC 弹窗确认")
 	if err := runElevated(setupPath, "-i", "-h"); err != nil {
 		return err
 	}
@@ -78,7 +82,7 @@ func Uninstall() error {
 		slog.Info("skip, VB-Cable 未安装, 无需卸载")
 		return nil
 	}
-	setupPath, cleanup, err := fetchSetup()
+	setupPath, cleanup, err := bundledSetup()
 	if err != nil {
 		return err
 	}
@@ -93,6 +97,45 @@ func Uninstall() error {
 	}
 	slog.Info("done, VB-Cable 已卸载, 正在使用它的 App 需重新选择音频设备")
 	return nil
+}
+
+func Update() error {
+	setupPath, cleanup, err := fetchSetup()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	slog.Info("recv, 请求管理员授权更新 VB-Cable(官网最新安装包), 请在 UAC 弹窗确认")
+	if err := runElevated(setupPath, "-i", "-h"); err != nil {
+		return err
+	}
+	if !waitFor(Installed, true, 30*time.Second) {
+		return fmt.Errorf("更新命令已执行但未检测到 CABLE Input 设备, 请重启系统后重试")
+	}
+	slog.Info("done, VB-Cable 已更新到官网最新版")
+	return nil
+}
+
+func bundledSetup() (string, func(), error) {
+	tmpDir, err := os.MkdirTemp("", "phonemic-driver-")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp dir: %w", err)
+	}
+	cleanup := func() { os.RemoveAll(tmpDir) }
+
+	zipPath := filepath.Join(tmpDir, "vbcable.zip")
+	if err := os.WriteFile(zipPath, bundledCablePack, 0o600); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("write bundled pack: %w", err)
+	}
+	setupPath, err := extractSetup(zipPath, tmpDir)
+	if err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	slog.Info("done, 已解出内置官方驱动包", "bytes", len(bundledCablePack))
+	return setupPath, cleanup, nil
 }
 
 func fetchSetup() (string, func(), error) {

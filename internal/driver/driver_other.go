@@ -17,3 +17,7 @@ func Install() error {
 func Uninstall() error {
 	return fmt.Errorf("当前系统暂不支持自动卸载虚拟声卡")
 }
+
+func Update() error {
+	return fmt.Errorf("当前系统暂不支持自动更新虚拟声卡")
+}

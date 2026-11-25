@@ -35,6 +35,7 @@ func (m *Manager) State() State {
 
 func (m *Manager) TriggerInstall() bool   { return m.trigger("install") }
 func (m *Manager) TriggerUninstall() bool { return m.trigger("uninstall") }
+func (m *Manager) TriggerUpdate() bool    { return m.trigger("update") }
 
 func (m *Manager) trigger(op string) bool {
 	m.mu.Lock()
@@ -53,9 +54,12 @@ func (m *Manager) trigger(op string) bool {
 
 func (m *Manager) run(op string) {
 	var err error
-	if op == "install" {
+	switch op {
+	case "install":
 		err = Install()
-	} else {
+	case "update":
+		err = Update()
+	default:
 		err = Uninstall()
 	}
 	installed, loaded := Probe()
@@ -68,7 +72,7 @@ func (m *Manager) run(op string) {
 		slog.Error("fail, 驱动操作失败", "op", op, "err", err)
 		return
 	}
-	if op == "install" {
+	if op != "uninstall" {
 		m.needsReboot = installed && !loaded
 		if m.needsReboot {
 			slog.Info("hit, 驱动已安装但设备未加载, 需重启电脑", "os", runtime.GOOS, "installed", installed, "loaded", loaded)
