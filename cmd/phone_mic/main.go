@@ -17,6 +17,7 @@ import (
 	"github.com/afret0/phoneMic/internal/certs"
 	"github.com/afret0/phoneMic/internal/driver"
 	"github.com/afret0/phoneMic/internal/server"
+	"github.com/afret0/phoneMic/internal/single"
 	"github.com/afret0/phoneMic/internal/ui"
 )
 
@@ -61,6 +62,8 @@ func main() {
 		return
 	}
 
+	single.TakeOver()
+
 	mgr := driver.NewManager()
 	if *device == driver.DefaultMatch && !driver.Installed() {
 		slog.Info("recv, 未检测到虚拟声卡, 后台自动安装(需系统管理员授权)")
@@ -73,11 +76,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	type playerResult struct {
+		p   *audio.Player
+		err error
+	}
+	playerCh := make(chan playerResult, 1)
+	go func() {
+		runtime.LockOSThread()
+		p, perr := audio.NewPlayer(*device)
+		playerCh <- playerResult{p, perr}
+	}()
+	pr := <-playerCh
 	var player *audio.Player
-	if p, perr := audio.NewPlayer(*device); perr != nil {
-		slog.Info("hit, 输出设备暂不可用, 等待驱动安装完成或在面板中选择", "match", *device, "err", perr)
+	if pr.err != nil {
+		slog.Info("hit, 输出设备暂不可用, 等待驱动安装完成或在面板中选择", "match", *device, "err", pr.err)
 	} else {
-		player = p
+		player = pr.p
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -96,6 +110,7 @@ func main() {
 	}()
 
 	app := ui.NewApp(srv, mgr, *device, *httpsAddr, *httpAddr, stop)
+	go single.WatchQuit(app.Quit)
 	go func() {
 		select {
 		case <-srvErr:

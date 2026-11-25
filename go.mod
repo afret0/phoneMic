@@ -9,6 +9,7 @@ require (
 	github.com/grandcat/zeroconf v1.0.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
+	golang.org/x/sys v0.50.0
 )
 
 require (
@@ -17,5 +18,4 @@ require (
 	github.com/miekg/dns v1.1.27 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/net v0.63.0 // indirect
-	golang.org/x/sys v0.50.0 // indirect
 )
