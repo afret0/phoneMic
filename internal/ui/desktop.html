@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>phoneMic</title>
+<style>
+:root {
+  --bg: #0F0F23;
+  --card: #1B1B30;
+  --muted: #27273B;
+  --border: #312E81;
+  --fg: #F8FAFC;
+  --muted-fg: #94A3B8;
+  --primary: #1E1B4B;
+  --secondary: #4338CA;
+  --accent: #22C55E;
+  --on-accent: #0F172A;
+  --danger: #EF4444;
+  --warn: #F59E0B;
+  --level: 0.55;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  background: radial-gradient(70% 32% at 50% 0%, rgba(67, 56, 202, 0.16), transparent 70%), var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 18px 18px 14px;
+  user-select: none;
+}
+.wrap { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+header { display: flex; align-items: center; gap: 10px; }
+.logo {
+  width: 38px; height: 38px; border-radius: 11px; flex: none;
+  background: linear-gradient(135deg, var(--secondary), var(--primary));
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  display: grid; place-items: center;
+  box-shadow: 0 0 18px rgba(67, 56, 202, 0.35);
+}
+.logo svg { width: 20px; height: 20px; stroke: var(--fg); }
+.brand { font-size: 18px; font-weight: 700; }
+.tagline { font-size: 12px; color: var(--muted-fg); }
+.ver { margin-left: auto; font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.pill {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  background: var(--card); border: 1px solid var(--muted);
+  border-radius: 999px; padding: 6px 13px;
+  font-size: 12.5px; font-weight: 500; color: var(--muted-fg);
+}
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748B; flex: none; }
+.pill.live { color: var(--fg); border-color: rgba(34, 197, 94, 0.4); }
+.pill.live .dot { background: var(--accent); box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); animation: blink 1.6s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+.card { background: var(--card); border: 1px solid var(--muted); border-radius: 16px; padding: 14px; }
+.cardHead { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; }
+.cardHead svg { width: 15px; height: 15px; stroke: var(--muted-fg); flex: none; }
+.cardHead .label { font-size: 12px; font-weight: 600; letter-spacing: 0.6px; color: var(--muted-fg); text-transform: uppercase; }
+.cardHead .right { margin-left: auto; }
+.row { display: flex; align-items: center; gap: 10px; }
+.status { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.status .dot { width: 9px; height: 9px; border-radius: 50%; background: #64748B; flex: none; }
+.status.ok .dot { background: var(--accent); box-shadow: 0 0 8px rgba(34, 197, 94, 0.7); }
+.status.warn .dot { background: var(--warn); }
+.status.bad .dot { background: var(--danger); }
+.status.busy .dot { background: var(--warn); animation: blink 1s ease-in-out infinite; }
+.hint { font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; }
+.banner {
+  display: none; margin-top: 10px; padding: 9px 12px; border-radius: 10px;
+  font-size: 12.5px; border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.08); color: #FCD34D;
+}
+.banner.show { display: block; }
+.banner.err { border-color: rgba(239, 68, 68, 0.5); background: rgba(239, 68, 68, 0.08); color: #FCA5A5; }
+.btn {
+  min-height: 38px; padding: 0 16px; border-radius: 10px;
+  border: 1px solid var(--muted); background: var(--muted); color: var(--fg);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background 150ms ease, border-color 150ms ease, opacity 150ms ease;
+}
+.btn svg { width: 14px; height: 14px; stroke: currentColor; flex: none; }
+.btn:hover:not(:disabled) { border-color: var(--border); }
+.btn:focus-visible { outline: 2px solid #FFF; outline-offset: 2px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.primary { background: var(--secondary); border-color: rgba(99, 102, 241, 0.55); }
+.btn.primary:hover:not(:disabled) { background: #4F46E5; border-color: #6366F1; }
+.btn.danger { background: transparent; border-color: rgba(239, 68, 68, 0.55); color: #FCA5A5; }
+.btn.danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.12); }
+.btn.mini { min-height: 30px; padding: 0 10px; font-size: 12px; border-radius: 8px; }
+select {
+  flex: 1; min-width: 0; height: 38px; border-radius: 10px;
+  border: 1px solid var(--muted); background: var(--muted); color: var(--fg);
+  padding: 0 10px; font-size: 13px; font-family: inherit;
+}
+select:focus-visible { outline: 2px solid #FFF; outline-offset: 2px; }
+.curDev { font-size: 13px; font-weight: 600; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.curDev .none { color: var(--warn); font-weight: 500; }
+.meter { height: 10px; border-radius: 999px; background: var(--muted); overflow: hidden; margin: 10px 0 4px; }
+.meter .fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--secondary), var(--accent));
+  border-radius: 999px; transition: width 120ms linear; transition: width 180ms linear;
+}
+.stats { display: flex; gap: 18px; margin-top: 10px; flex-wrap: wrap; }
+.stat .k { font-size: 11px; color: var(--muted-fg); letter-spacing: 0.4px; }
+.stat .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 11px; font-weight: 500; color: var(--muted-fg); }
+.diag { font-size: 11.5px; color: var(--muted-fg); margin-top: 8px; font-variant-numeric: tabular-nums; }
+.entry { display: flex; gap: 14px; align-items: flex-start; }
+.qrBox {
+  width: 128px; height: 128px; flex: none; border-radius: 12px;
+  background: #FFF; padding: 6px; display: grid; place-items: center;
+}
+.qrBox img { width: 100%; height: 100%; image-rendering: pixelated; }
+.qrBox .ph { color: #64748B; font-size: 11px; }
+.urls { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.urlRow { display: flex; align-items: center; gap: 6px; }
+.urlRow .u {
+  flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  user-select: text;
+}
+.steps { margin-top: 10px; font-size: 12.5px; color: var(--muted-fg); display: flex; flex-direction: column; gap: 4px; }
+.steps b { color: var(--fg); font-weight: 600; }
+.steps a { color: #A5B4FC; text-decoration: none; user-select: text; }
+footer { display: flex; align-items: center; gap: 10px; padding: 2px 2px 6px; }
+footer .note { font-size: 11.5px; color: var(--muted-fg); }
+footer .btn { margin-left: auto; }
+#toast {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(16px);
+  max-width: 86%; padding: 10px 16px; border-radius: 12px;
+  background: #262640; border: 1px solid var(--border); color: var(--fg);
+  font-size: 13px; opacity: 0; pointer-events: none;
+  transition: opacity 200ms ease, transform 200ms ease;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.err { border-color: rgba(239, 68, 68, 0.6); }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+    </div>
+    <div>
+      <div class="brand">phoneMic</div>
+      <div class="tagline">手机就是你的电脑麦克风</div>
+    </div>
+    <div class="ver" id="ver"></div>
+  </header>
+
+  <div class="pill" id="svcPill"><span class="dot"></span><span id="svcText">服务启动中</span></div>
+
+  <div class="card">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+      <span class="label">虚拟声卡</span>
+    </div>
+    <div class="row">
+      <div class="status" id="drvStatus"><span class="dot"></span><span id="drvText">检测中</span></div>
+      <div class="row" style="margin-left:auto">
+        <button class="btn primary" id="btnInstall">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          安装
+        </button>
+        <button class="btn danger" id="btnUninstall">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          卸载
+        </button>
+      </div>
+    </div>
+    <div class="hint" id="drvHint"></div>
+    <div class="banner" id="drvBanner"></div>
+  </div>
+
+  <div class="card">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+      <span class="label">电脑输出设备</span>
+      <button class="btn mini right" id="btnRefresh">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        刷新
+      </button>
+    </div>
+    <div class="curDev" id="curDev">检测中</div>
+    <div class="row">
+      <select id="devSelect" aria-label="选择输出设备"></select>
+      <button class="btn" id="btnSwitch">切换</button>
+    </div>
+    <div class="banner" id="spkWarn">正在输出到物理扬声器:手机声音会从音响外放,可能被手机再次拾取产生啸叫。建议切换到虚拟声卡。</div>
+  </div>
+
+  <div class="card">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span class="label">推流状态</span>
+    </div>
+    <div class="status" id="strStatus"><span class="dot"></span><span id="strText">等待手机连接</span></div>
+    <div class="meter"><div class="fill" id="levelFill"></div></div>
+    <div class="row" style="justify-content:space-between">
+      <span class="hint" id="dbText">-- dB</span>
+      <span class="hint" id="remoteText"></span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="k">时长</div><div class="v" id="durText">0:00</div></div>
+      <div class="stat"><div class="k">缓冲</div><div class="v" id="bufText">0 <small>ms</small></div></div>
+      <div class="stat"><div class="k">已写入</div><div class="v" id="writtenText">0 <small>KB</small></div></div>
+    </div>
+    <div class="diag" id="diagText"></div>
+  </div>
+
+  <div class="card">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+      <span class="label">手机接入</span>
+    </div>
+    <div class="entry">
+      <div class="qrBox" id="qrBox"><span class="ph">生成中</span></div>
+      <div class="urls" id="urlList"></div>
+    </div>
+    <div class="steps">
+      <div>1. 手机首次使用先安装证书:<a id="certLink" href="#" title="点击复制链接"></a></div>
+      <div>2. 手机与电脑连同一 Wi-Fi,扫码或输入上方地址打开页面</div>
+      <div>3. 手机点麦克风开始推流;会议 App 麦克风选 <b id="micName"></b></div>
+    </div>
+  </div>
+
+  <footer>
+    <span class="note" id="closeNote">关闭窗口会收进托盘继续推流</span>
+    <button class="btn danger mini" id="btnQuit">退出程序</button>
+  </footer>
+</div>
+<div id="toast"></div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let polling = false, lastDrvKey = '', lastEndpoints = '', devicesLoaded = false, busyUI = false;
+
+  const VIRTUAL_MATCH = { windows: 'cable input', darwin: 'blackhole' };
+  let virtualDefault = '';
+
+  const copyText = async text => {
+    try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove();
+    return ok;
+  };
+
+  const toast = (msg, isErr) => {
+    const t = $('toast');
+    t.textContent = msg;
+    t.className = isErr ? 'show err' : 'show';
+    clearTimeout(t._h);
+    t._h = setTimeout(() => { t.className = ''; }, 3200);
+  };
+
+  const fmtDur = sec => {
+    sec = Math.max(0, Math.floor(sec));
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + String(s).padStart(2, '0');
+  };
+
+  const isVirtual = name => /cable|blackhole/i.test(name || '');
+
+  async function refreshDevices(selectName) {
+    try {
+      const list = await window.ListDevices();
+      const sel = $('devSelect');
+      sel.innerHTML = '';
+      const auto = document.createElement('option');
+      auto.value = '';
+      auto.textContent = '自动(虚拟声卡)';
+      sel.appendChild(auto);
+      (list || []).forEach(d => {
+        const o = document.createElement('option');
+        o.value = d.Name;
+        o.textContent = d.Name + (d.IsDefault ? ' (系统默认)' : '');
+        sel.appendChild(o);
+      });
+      if (selectName !== undefined) sel.value = selectName;
+      devicesLoaded = true;
+    } catch (e) {
+      toast('枚举输出设备失败: ' + e, true);
+    }
+  }
+
+  function renderDriver(d, micName) {
+    const st = $('drvStatus'), tx = $('drvText');
+    let cls = '', text = '', hint = '';
+    if (d.busy && d.op === 'install') { cls = 'busy'; text = '正在安装,请在电脑上确认授权弹窗'; }
+    else if (d.busy && d.op === 'uninstall') { cls = 'busy'; text = '正在卸载,请在电脑上确认授权弹窗'; }
+    else if (d.installed && d.loaded) { cls = 'ok'; text = '已安装并加载'; hint = '会议/聊天 App 的麦克风请选 ' + micName; }
+    else if (d.installed && !d.loaded) { cls = 'warn'; text = '已安装,设备未加载'; hint = '需要重启电脑后虚拟声卡才会出现在设备列表'; }
+    else if (!d.installed && d.loaded) { cls = 'warn'; text = '已卸载,重启后生效'; hint = '重启电脑后设备列表才会移除它'; }
+    else { cls = 'bad'; text = '未安装'; hint = '点「安装」下载官方驱动包,安装时需确认系统授权弹窗'; }
+    st.className = 'status ' + cls;
+    tx.textContent = text;
+    $('drvHint').textContent = hint;
+
+    const banner = $('drvBanner');
+    if (d.lastError) { banner.className = 'banner err show'; banner.textContent = '上次操作失败: ' + d.lastError; }
+    else if (d.needsReboot) { banner.className = 'banner show'; banner.textContent = '驱动已安装,重启电脑后生效。重启前手机推流不会有声音。'; }
+    else { banner.className = 'banner'; banner.textContent = ''; }
+
+    $('btnInstall').disabled = d.busy || d.installed;
+    $('btnUninstall').disabled = d.busy || !d.installed;
+
+    const key = [d.busy, d.op, d.installed, d.loaded].join('|');
+    if (key !== lastDrvKey) {
+      const prevBusy = lastDrvKey !== '' && lastDrvKey.split('|')[0] === 'true';
+      if (prevBusy && !d.busy) {
+        refreshDevices();
+        if (!d.lastError) toast(d.installed ? '驱动安装完成' : '驱动已卸载');
+      }
+      if (lastDrvKey !== '') refreshDevices();
+      lastDrvKey = key;
+    }
+  }
+
+  function renderStream(s) {
+    const live = !!s.streaming;
+    const pill = $('svcPill');
+    pill.className = live ? 'pill live' : 'pill';
+    $('svcText').textContent = live ? '手机推流中' : '服务运行中 · 等待手机连接';
+
+    const st = $('strStatus');
+    st.className = live ? 'status ok' : 'status';
+    $('strText').textContent = live ? '手机在线' : '等待手机连接';
+    $('remoteText').textContent = live && s.remote ? s.remote : '';
+
+    const level = typeof s.level === 'number' ? s.level : 0;
+    $('levelFill').style.width = Math.min(100, Math.round(Math.sqrt(level) * 100)) + '%';
+    $('dbText').textContent = level > 0.0001 ? (20 * Math.log10(level)).toFixed(1) + ' dB' : '-- dB';
+
+    $('durText').textContent = fmtDur((s.sessionBytes || 0) / 96000);
+    $('bufText').innerHTML = (s.bufferedMs || 0) + ' <small>ms</small>';
+    const kb = (s.writtenBytes || 0) / 1024;
+    $('writtenText').innerHTML = (kb > 1024 ? (kb / 1024).toFixed(1) + ' <small>MB</small>' : Math.round(kb) + ' <small>KB</small>');
+    $('diagText').textContent = '丢帧 ' + (s.dropOldestBytes || 0) + ' B · 欠载 ' + (s.underrunBytes || 0) + ' B · 静音回调 ' + (s.silentCallbacks || 0) + '/' + (s.totalCallbacks || 0);
+  }
+
+  function renderDevice(dev) {
+    const el = $('curDev');
+    if (dev.current) {
+      el.innerHTML = '';
+      el.textContent = '当前输出: ' + dev.current;
+      $('spkWarn').className = isVirtual(dev.current) ? 'banner' : 'banner show';
+    } else {
+      el.innerHTML = '<span class="none">未连接输出设备(等待驱动安装或手动选择)</span>';
+      $('spkWarn').className = 'banner';
+    }
+    if (devicesLoaded && !busyUI && document.activeElement !== sel) {
+      const isDefault = dev.match && dev.match.toLowerCase() === virtualDefault;
+      const want = dev.match && !isDefault ? dev.current : '';
+      for (const o of sel.options) { if (o.value === want) { sel.value = want; break; } }
+    }
+  }
+
+  async function renderEndpoints(endpoints, certUrl) {
+    const key = (endpoints || []).join(',');
+    if (key === lastEndpoints) return;
+    lastEndpoints = key;
+    const list = $('urlList');
+    list.innerHTML = '';
+    (endpoints || []).forEach(u => {
+      const row = document.createElement('div');
+      row.className = 'urlRow';
+      const span = document.createElement('span');
+      span.className = 'u';
+      span.textContent = u;
+      const btn = document.createElement('button');
+      btn.className = 'btn mini';
+      btn.textContent = '复制';
+      btn.onclick = async () => {
+        toast(await copyText(u) ? '已复制 ' + u : '复制失败,请手动选择文本', false);
+      };
+      row.appendChild(span); row.appendChild(btn);
+      list.appendChild(row);
+    });
+    if (!endpoints || !endpoints.length) {
+      list.innerHTML = '<span class="hint">未检测到局域网地址,请确认已连接 Wi-Fi</span>';
+    }
+    const cert = $('certLink');
+    cert.textContent = certUrl || '';
+    cert.href = certUrl || '#';
+    if (endpoints && endpoints.length) {
+      try {
+        const data = await window.QR(endpoints[0]);
+        const box = $('qrBox');
+        box.innerHTML = '';
+        const img = document.createElement('img');
+        img.src = data;
+        img.alt = '手机页面二维码';
+        box.appendChild(img);
+      } catch (e) { $('qrBox').innerHTML = '<span class="ph">二维码生成失败</span>'; }
+    }
+  }
+
+  async function poll() {
+    if (polling) return;
+    polling = true;
+    try {
+      const s = await window.GetState();
+      virtualDefault = VIRTUAL_MATCH[s.os] || '';
+      $('ver').textContent = 'v' + s.version;
+      $('micName').textContent = s.micName;
+      $('closeNote').textContent = s.os === 'windows' ? '关闭窗口会收进托盘继续推流' : '关闭窗口即退出程序';
+      renderDriver(s.driver, s.micName);
+      renderStream(s.status || {});
+      renderDevice(s.device || {});
+      renderEndpoints(s.endpoints, s.certUrl);
+      if (!devicesLoaded) refreshDevices(s.device && s.device.current ? s.device.current : '');
+    } catch (e) {
+      $('svcText').textContent = '状态获取失败: ' + e;
+    } finally {
+      polling = false;
+    }
+  }
+
+  $('btnInstall').onclick = async () => {
+    try {
+      const ok = await window.InstallDriver();
+      toast(ok ? '开始安装,请留意电脑上的授权弹窗' : '已有操作进行中', !ok);
+    } catch (e) { toast('触发安装失败: ' + e, true); }
+    poll();
+  };
+  $('btnUninstall').onclick = async () => {
+    try {
+      const ok = await window.UninstallDriver();
+      toast(ok ? '开始卸载,请留意电脑上的授权弹窗' : '已有操作进行中', !ok);
+    } catch (e) { toast('触发卸载失败: ' + e, true); }
+    poll();
+  };
+  $('btnRefresh').onclick = () => refreshDevices($('devSelect').value);
+  $('btnSwitch').onclick = async () => {
+    const name = $('devSelect').value;
+    busyUI = true;
+    $('btnSwitch').disabled = true;
+    try {
+      await window.SwitchDevice(name);
+      toast(name ? '已切换到 ' + name : '已切回自动(虚拟声卡)');
+    } catch (e) {
+      toast('切换失败: ' + e, true);
+    } finally {
+      busyUI = false;
+      $('btnSwitch').disabled = false;
+      poll();
+    }
+  };
+  $('certLink').onclick = async e => {
+    e.preventDefault();
+    const url = $('certLink').textContent;
+    if (url) toast(await copyText(url) ? '已复制证书下载地址,发到手机浏览器打开安装' : '复制失败,请手动输入地址', false);
+  };
+  $('btnQuit').onclick = () => window.QuitApp();
+
+  poll();
+  setInterval(poll, 750);
+})();
+</script>
+</body>
+</html>

@@ -24,6 +24,24 @@ func Installed() bool {
 	return err == nil
 }
 
+func Probe() (installed, loaded bool) {
+	installed = Installed()
+	if !installed {
+		return false, false
+	}
+	devices, err := audio.ListOutputDevices()
+	if err != nil {
+		slog.Error("fail, 枚举输出设备失败", "err", err)
+		return true, false
+	}
+	for _, d := range devices {
+		if strings.Contains(strings.ToLower(d.Name), DefaultMatch) {
+			return true, true
+		}
+	}
+	return true, false
+}
+
 func Install() error {
 	if Installed() {
 		slog.Info("skip, BlackHole 已安装, 无需重复安装", "path", driverPath)

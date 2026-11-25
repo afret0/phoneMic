@@ -1,6 +1,6 @@
 /phone_mic
 /phone_mic.exe
-certs/
+/certs/
 *.exe
 .DS_Store
 android/.gradle/

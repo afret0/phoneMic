@@ -8,6 +8,8 @@ const DefaultMatch = ""
 
 func Installed() bool { return false }
 
+func Probe() (installed, loaded bool) { return false, false }
+
 func Install() error {
 	return fmt.Errorf("当前系统暂不支持自动安装虚拟声卡, 请用 --device 指定已有虚拟设备")
 }

@@ -1,8 +1,10 @@
 package audio
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync/atomic"
 	"unsafe"
@@ -43,6 +45,7 @@ type Player struct {
 	deviceName string
 	silentCb   atomic.Uint64
 	totalCb    atomic.Uint64
+	levelBits  atomic.Uint64
 }
 
 func NewPlayer(match string) (*Player, error) {
@@ -85,9 +88,18 @@ func NewPlayer(match string) (*Player, error) {
 	callbacks := malgo.DeviceCallbacks{
 		Data: func(output, _ []byte, frameCount uint32) {
 			p.totalCb.Add(1)
-			if p.jb.Read(output[:int(frameCount)*BytesPerSample]) {
+			n := int(frameCount) * BytesPerSample
+			if p.jb.Read(output[:n]) {
 				p.silentCb.Add(1)
+				p.levelBits.Store(0)
+				return
 			}
+			var sum float64
+			for i := 0; i+1 < n; i += 2 {
+				v := float64(int16(binary.LittleEndian.Uint16(output[i:i+2]))) / 32768
+				sum += v * v
+			}
+			p.levelBits.Store(math.Float64bits(math.Sqrt(sum / float64(frameCount))))
 		},
 	}
 	dev, err := malgo.InitDevice(ctx.Context, cfg, callbacks)
@@ -116,6 +128,8 @@ func (p *Player) DeviceName() string { return p.deviceName }
 func (p *Player) CallbackStats() (silent, total uint64) {
 	return p.silentCb.Load(), p.totalCb.Load()
 }
+
+func (p *Player) Level() float64 { return math.Float64frombits(p.levelBits.Load()) }
 
 func (p *Player) Close() {
 	_ = p.dev.Stop()

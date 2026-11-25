@@ -35,10 +35,12 @@ type session struct {
 }
 
 type Server struct {
-	player    *audio.Player
 	bundle    *certs.Bundle
 	httpsAddr string
 	httpAddr  string
+
+	playerMu sync.RWMutex
+	player   *audio.Player
 
 	connMu  sync.Mutex
 	current *session
@@ -55,6 +57,39 @@ func New(player *audio.Player, bundle *certs.Bundle, httpsAddr, httpAddr string)
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+	}
+}
+
+func (s *Server) currentPlayer() *audio.Player {
+	s.playerMu.RLock()
+	defer s.playerMu.RUnlock()
+	return s.player
+}
+
+func (s *Server) SetPlayer(p *audio.Player) {
+	s.playerMu.Lock()
+	old := s.player
+	s.player = p
+	s.playerMu.Unlock()
+
+	if old == nil && p != nil {
+		slog.Info("done, 输出设备已接入", "device", p.DeviceName())
+	}
+	if old != nil && p == nil {
+		slog.Info("hit, 输出设备已摘除", "device", old.DeviceName())
+	}
+	if old != nil && p != nil {
+		slog.Info("hit, 输出设备切换", "old", old.DeviceName(), "new", p.DeviceName())
+	}
+
+	s.connMu.Lock()
+	cur := s.current
+	s.connMu.Unlock()
+	if cur != nil && p != nil {
+		p.JitterBuffer().Reset()
+	}
+	if old != nil {
+		old.Close()
 	}
 }
 
@@ -138,30 +173,43 @@ func (s *Server) serveCA(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	bufferedMs, dropOldest, underrun, written := s.player.JitterBuffer().Stats()
-	silentCb, totalCb := s.player.CallbackStats()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.Status())
+}
 
+func (s *Server) PlayerName() string {
+	if p := s.currentPlayer(); p != nil {
+		return p.DeviceName()
+	}
+	return ""
+}
+
+func (s *Server) Status() map[string]any {
 	s.connMu.Lock()
 	cur := s.current
 	s.connMu.Unlock()
 
 	status := map[string]any{
-		"device":          s.player.DeviceName(),
-		"streaming":       cur != nil,
-		"bufferedMs":      bufferedMs,
-		"dropOldestBytes": dropOldest,
-		"underrunBytes":   underrun,
-		"writtenBytes":    written,
-		"silentCallbacks": silentCb,
-		"totalCallbacks":  totalCb,
+		"streaming": cur != nil,
+	}
+	if p := s.currentPlayer(); p != nil {
+		bufferedMs, dropOldest, underrun, written := p.JitterBuffer().Stats()
+		silentCb, totalCb := p.CallbackStats()
+		status["device"] = p.DeviceName()
+		status["level"] = p.Level()
+		status["bufferedMs"] = bufferedMs
+		status["dropOldestBytes"] = dropOldest
+		status["underrunBytes"] = underrun
+		status["writtenBytes"] = written
+		status["silentCallbacks"] = silentCb
+		status["totalCallbacks"] = totalCb
 	}
 	if cur != nil {
 		status["sessionBytes"] = cur.bytes.Load()
 		status["sessionFrames"] = cur.frames.Load()
 		status["remote"] = cur.remote
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(status)
+	return status
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +233,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		_ = old.conn.Close()
 	}
 
-	s.player.JitterBuffer().Reset()
+	player := s.currentPlayer()
+	if player != nil {
+		player.JitterBuffer().Reset()
+	} else {
+		slog.Info("hit, 无输出设备, 音频帧将被丢弃", "remote", sess.remote)
+	}
 	slog.Info("recv, 手机推流已连接", "remote", sess.remote)
 
 	conn.SetReadLimit(wsReadLimit)
@@ -221,9 +274,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		sess.bytes.Add(uint64(len(data)))
 		sess.frames.Add(1)
-		if dropped := s.player.JitterBuffer().Write(data); dropped > 0 && time.Since(lastOverflowLog) > time.Second {
+		player = s.currentPlayer()
+		if player == nil {
+			continue
+		}
+		if dropped := player.JitterBuffer().Write(data); dropped > 0 && time.Since(lastOverflowLog) > time.Second {
 			lastOverflowLog = time.Now()
-			bufferedMs, dropTotal, _, _ := s.player.JitterBuffer().Stats()
+			bufferedMs, dropTotal, _, _ := player.JitterBuffer().Stats()
 			slog.Info("hit, 缓冲超上限丢最旧音频", "判定", "buffered > 300ms", "droppedBytes", dropped, "bufferedMs", bufferedMs, "dropTotalBytes", dropTotal)
 		}
 	}
@@ -236,11 +293,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	s.connMu.Unlock()
 
-	bufferedMs, dropTotal, underrun, _ := s.player.JitterBuffer().Stats()
-	slog.Info("done, 手机推流断开", "remote", sess.remote,
+	fields := []any{
+		"remote", sess.remote,
 		"durationSec", int(time.Since(sess.startedAt).Seconds()),
 		"sessionBytes", sess.bytes.Load(), "sessionFrames", sess.frames.Load(),
-		"bufferedMs", bufferedMs, "dropTotalBytes", dropTotal, "underrunBytes", underrun)
+	}
+	if player = s.currentPlayer(); player != nil {
+		bufferedMs, dropTotal, underrun, _ := player.JitterBuffer().Stats()
+		fields = append(fields, "bufferedMs", bufferedMs, "dropTotalBytes", dropTotal, "underrunBytes", underrun)
+	}
+	slog.Info("done, 手机推流断开", fields...)
 }
 
 func (s *Server) dropCurrent(reason string) {
@@ -270,12 +332,16 @@ func (s *Server) statsLoop(ctx context.Context) {
 			if cur == nil {
 				continue
 			}
-			bufferedMs, dropTotal, underrun, _ := s.player.JitterBuffer().Stats()
-			silentCb, totalCb := s.player.CallbackStats()
-			slog.Info("hit, 推流中", "remote", cur.remote, "sessionBytes", cur.bytes.Load(),
-				"bufferedMs", bufferedMs, "bufferedTargetMs", audio.TargetBufferMs,
-				"dropTotalBytes", dropTotal, "underrunBytes", underrun,
-				"silentCallbacks", silentCb, "totalCallbacks", totalCb)
+			fields := []any{"remote", cur.remote, "sessionBytes", cur.bytes.Load()}
+			if p := s.currentPlayer(); p != nil {
+				bufferedMs, dropTotal, underrun, _ := p.JitterBuffer().Stats()
+				silentCb, totalCb := p.CallbackStats()
+				fields = append(fields,
+					"bufferedMs", bufferedMs, "bufferedTargetMs", audio.TargetBufferMs,
+					"dropTotalBytes", dropTotal, "underrunBytes", underrun,
+					"silentCallbacks", silentCb, "totalCallbacks", totalCb)
+			}
+			slog.Info("hit, 推流中", fields...)
 		}
 	}
 }

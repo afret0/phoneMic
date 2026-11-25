@@ -41,6 +41,16 @@ func findCable(devices []audio.OutputDevice) bool {
 	return false
 }
 
+func Probe() (installed, loaded bool) {
+	devices, err := audio.ListOutputDevices()
+	if err != nil {
+		slog.Error("fail, 枚举输出设备失败, 按未安装处理", "err", err)
+		return false, false
+	}
+	found := findCable(devices)
+	return found, found
+}
+
 func Install() error {
 	if Installed() {
 		slog.Info("skip, VB-Cable 已安装, 无需重复安装")

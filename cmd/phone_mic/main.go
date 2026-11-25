@@ -4,10 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -15,10 +17,11 @@ import (
 	"github.com/afret0/phoneMic/internal/certs"
 	"github.com/afret0/phoneMic/internal/driver"
 	"github.com/afret0/phoneMic/internal/server"
+	"github.com/afret0/phoneMic/internal/ui"
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(openLogSink(), os.Stdout), nil)))
 
 	device := flag.String("device", driver.DefaultMatch, "输出设备名匹配子串(不区分大小写)")
 	listDevices := flag.Bool("list-devices", false, "列出所有输出设备后退出")
@@ -26,7 +29,7 @@ func main() {
 	uninstallDriver := flag.Bool("uninstall-driver", false, "卸载虚拟声卡, 需管理员授权")
 	httpsAddr := flag.String("https-addr", ":8443", "HTTPS 监听地址(手机页面/推流)")
 	httpAddr := flag.String("http-addr", ":8080", "HTTP 监听地址(仅CA证书下载与跳转)")
-	certsDir := flag.String("certs-dir", "certs", "自签CA与服务证书存放目录")
+	certsDir := flag.String("certs-dir", defaultCertsDir(), "自签CA与服务证书存放目录(默认在程序所在目录, 保证手机端已信任的 CA 持久复用)")
 	flag.Parse()
 
 	switch {
@@ -58,9 +61,10 @@ func main() {
 		return
 	}
 
+	mgr := driver.NewManager()
 	if *device == driver.DefaultMatch && !driver.Installed() {
-		slog.Error("fail, 未检测到虚拟声卡", "hint", "先运行 ./phone_mic --install-driver 安装(需管理员授权), 或用 --device 指定其它输出设备")
-		os.Exit(1)
+		slog.Info("recv, 未检测到虚拟声卡, 后台自动安装(需系统管理员授权)")
+		mgr.TriggerInstall()
 	}
 
 	bundle, err := certs.Ensure(*certsDir, certs.LocalIPv4s())
@@ -69,27 +73,73 @@ func main() {
 		os.Exit(1)
 	}
 
-	player, err := audio.NewPlayer(*device)
-	if err != nil {
-		if driver.Installed() {
-			slog.Error("fail, 打开输出设备失败, 驱动已安装但设备未加载, 请重启电脑后再试", "match", *device, "err", err)
-		} else {
-			slog.Error("fail, 打开输出设备失败", "match", *device, "err", err)
-		}
-		os.Exit(1)
+	var player *audio.Player
+	if p, perr := audio.NewPlayer(*device); perr != nil {
+		slog.Info("hit, 输出设备暂不可用, 等待驱动安装完成或在面板中选择", "match", *device, "err", perr)
+	} else {
+		player = p
 	}
-	defer player.Close()
-
-	printBanner(*httpsAddr, *httpAddr, player.DeviceName())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	srv := server.New(player, bundle, *httpsAddr, *httpAddr)
-	if err := srv.Run(ctx); err != nil {
-		slog.Error("fail, 服务退出", "err", err)
-		os.Exit(1)
+	srvDone := make(chan struct{})
+	srvErr := make(chan error, 1)
+	go func() {
+		err := srv.Run(ctx)
+		close(srvDone)
+		if err != nil {
+			slog.Error("fail, 服务退出", "err", err)
+			srvErr <- err
+		}
+	}()
+
+	app := ui.NewApp(srv, mgr, *device, *httpsAddr, *httpAddr, stop)
+	go func() {
+		select {
+		case <-srvErr:
+			app.Quit()
+		case <-ctx.Done():
+			app.Quit()
+		}
+	}()
+
+	deviceName := srv.PlayerName()
+	if deviceName == "" {
+		deviceName = "(等待驱动安装或在面板中选择)"
 	}
+	printBanner(*httpsAddr, *httpAddr, deviceName)
+
+	app.Run()
+	stop()
+	<-srvDone
+	srv.SetPlayer(nil)
+	slog.Info("done, 程序已退出")
+}
+
+func defaultCertsDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "certs"
+	}
+	return filepath.Join(filepath.Dir(exe), "certs")
+}
+
+func openLogSink() io.Writer {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	logDir := filepath.Join(dir, "phoneMic")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return os.Stderr
+	}
+	f, err := os.OpenFile(filepath.Join(logDir, "phone_mic.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return os.Stderr
+	}
+	return f
 }
 
 func printBanner(httpsAddr, httpAddr, deviceName string) {
