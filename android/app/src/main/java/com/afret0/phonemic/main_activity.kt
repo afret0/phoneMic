@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.log10
 
 private val Bg = Color(0xFF0F0F23)
@@ -88,17 +89,19 @@ class MainActivity : ComponentActivity() {
 
 private fun prefs(ctx: Context) = ctx.getSharedPreferences("phone_mic", Context.MODE_PRIVATE)
 
-private fun persistSelected(ctx: Context, srv: Srv) {
+internal fun persistSelected(ctx: Context, srv: Srv) {
     prefs(ctx).edit().putString("last_host", srv.host).putInt("last_port", srv.port)
         .putInt("last_http", srv.httpPort).putString("last_name", srv.name).apply()
 }
 
-private fun parseManual(text: String, servers: List<Srv>): Srv? {
+private val addrPattern = Regex("^[A-Za-z0-9._-]+(?::\\d{1,5})?$")
+
+internal fun parseManual(text: String, servers: List<Srv>): Srv? {
     val t = text.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
-    if (t.isEmpty()) return null
+    if (!addrPattern.matches(t)) return null
     val host = t.substringBefore(':')
-    if (host.isEmpty()) return null
     val port = t.substringAfter(':', "").toIntOrNull() ?: 8443
+    if (port !in 1..65535) return null
     val known = servers.firstOrNull { it.host == host }
     return Srv(known?.name ?: "手动输入", host, port, known?.httpPort ?: 8080)
 }
@@ -121,6 +124,9 @@ fun App() {
     var manualText by remember { mutableStateOf("") }
     var pendingSrv by remember { mutableStateOf<Srv?>(null) }
     var localErr by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf(false) }
+    var refreshTick by remember { mutableIntStateOf(0) }
+    var doDiscovery by remember { mutableStateOf<Discovery?>(null) }
 
     fun doStart(srv: Srv) {
         persistSelected(ctx, srv)
@@ -150,11 +156,24 @@ fun App() {
             doStart(srv)
         }
     }
+    val camLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scanning = true else localErr = "需要相机权限才能扫码"
+    }
 
     DisposableEffect(Unit) {
         val d = Discovery(ctx)
+        doDiscovery = d
         d.start()
-        onDispose { d.stop() }
+        onDispose {
+            doDiscovery = null
+            d.stop()
+        }
+    }
+    LaunchedEffect(active, refreshTick) {
+        while (!active && isActive) {
+            delay(30_000)
+            doDiscovery?.refresh(false)
+        }
     }
     LaunchedEffect(Unit) {
         val p = prefs(ctx)
@@ -256,6 +275,15 @@ fun App() {
                     MicState.selected.value = srv
                     persistSelected(ctx, srv)
                 }
+            }, {
+                refreshTick++
+                doDiscovery?.refresh(true)
+            }, {
+                if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    scanning = true
+                } else {
+                    camLauncher.launch(Manifest.permission.CAMERA)
+                }
             })
             Spacer(Modifier.height(12.dp))
         } else {
@@ -269,6 +297,19 @@ fun App() {
             color = Muted.copy(alpha = 0.7f), fontSize = 12.sp,
             modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp), textAlign = TextAlign.Center,
         )
+    }
+    if (scanning) {
+        ScanScreen(onResult = { raw ->
+            scanning = false
+            val srv = parseManual(raw, MicState.servers.value)
+            if (srv == null) {
+                localErr = "二维码不是电脑地址"
+            } else {
+                localErr = null
+                MicState.selected.value = srv
+                persistSelected(ctx, srv)
+            }
+        }, onClose = { scanning = false })
     }
 }
 
@@ -434,14 +475,28 @@ fun LevelCard() {
 fun ServerCard(
     servers: List<Srv>, selected: Srv?, manualText: String,
     onManualChange: (String) -> Unit, onSelect: (Srv) -> Unit, onManualOk: () -> Unit,
+    onRefresh: () -> Unit, onScan: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(16.dp),
     ) {
-        Text("连接到电脑", color = Fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("连接到电脑", color = Fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text(
+                "刷新", color = Muted, fontSize = 13.sp,
+                modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onRefresh)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            Text(
+                "扫码", color = Green, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onScan)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
         Spacer(Modifier.height(10.dp))
         if (servers.isEmpty()) {
-            Text("同一 WiFi 下自动搜索中… 找不到就手动输入电脑 IP", color = Muted, fontSize = 13.sp)
+            Text("同一 WiFi 下自动搜索中… 可扫码、手动输入 IP 或点刷新", color = Muted, fontSize = 13.sp)
         }
         servers.forEach { srv ->
             val sel = selected?.host == srv.host && selected.port == srv.port

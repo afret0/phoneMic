@@ -170,7 +170,7 @@ func printBanner(httpsAddr, httpAddr, deviceName string) {
 	}
 	_, httpPort, err := net.SplitHostPort(httpAddr)
 	if err == nil {
-		for _, ip := range certs.LocalIPv4s() {
+		for _, ip := range certs.ReachableIPv4s() {
 			fmt.Printf("  首次使用先装证书: http://%s:%s/ca.crt\n", ip.String(), httpPort)
 			break
 		}

@@ -6,7 +6,7 @@
 
 - **本机全局 `go env CGO_ENABLED=0`**：所有 go build/test/vet 必须显式前缀 `CGO_ENABLED=1`，否则 malgo 符号全部 undefined。
 - 测试与 mac 构建：`CGO_ENABLED=1 go test ./...`、`CGO_ENABLED=1 go build -o phone_mic ./cmd/phone_mic`（malgo 走 cgo，需 Xcode CLT）。
-- Windows 交叉编译（本机验证用）：`CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc go build -o phone_mic.exe ./cmd/phone_mic`；mingw-w64 由 brew 安装（免 sudo；ghcr.io 被限速/断流时用 `HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles`）。
+- Windows 交叉编译（本机验证用）：`CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ go build -o phone_mic.exe ./cmd/phone_mic`；**CXX 必须显式指定**——只设 CC 时 cgo 用宿主 clang++ 编 webview.cc，报 `shlobj.h file not found`（GCC16/mingw-w64 14 实测）；mingw-w64 由 brew 安装（免 sudo；ghcr.io 被限速/断流时用 `HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles`）。
 - 运行：`./phone_mic`（HTTPS :8443 手机页面/WS，HTTP :8080 仅 CA 下载与跳转）；`--list-devices` 列输出设备；`--device <substr>` 指定输出设备；`--install-driver` / `--uninstall-driver` 安装/卸载虚拟声卡（都会弹系统管理员授权）。
 - 首次使用顺序：`--install-driver`（mac 装 BlackHole2ch，win 装 VB-Cable）→ **mac 需重启电脑**（见下）→ 启动 → 手机浏览器装页面引导里的 CA 证书 → 打开 `https://<局域网IP>:8443` 开始推流 → 会议 App 麦克风选虚拟声卡。
 
@@ -43,11 +43,13 @@
 - 构建必须 JDK21：`cd android && export JAVA_HOME=/Users/afreto/Library/Java/JavaVirtualMachines/corretto-21.0.3/Contents/Home && ./gradlew :app:assembleDebug :app:testDebugUnitTest`（系统 Gradle 9.2.1 默认 JVM25 与 wrapper 8.14.3 不兼容）。APK 在 `android/app/build/outputs/apk/debug/app-debug.apk`；Compose 依赖本机未缓存，settings.gradle.kts 已配阿里云镜像优先。
 - 信任模型 TOFU：首连 https 探测失败 → 从 mDNS TXT 的 http 端口取 `/ca.crt` → `PinnedCaTrustManager` 校验后存 prefs `ca_store`（key `ca_<host>`）→ 重建 client。**已固定 CA 时探测失败分流**：SSLException（证书换了）才重走 TOFU；连接类失败（ConnectException 等）直接用固定 client 让 WS 自然重试，不重取 CA。
 - 重连：退避 `1s shl (attempt-1)` 封顶 30s；被踢 code 4001 是终态不重连；连接成功 attempt 归零。
+- 扫码与发现刷新（2026-11-25 用户拍板）：内置扫码页 CameraX 1.4.1 + MLKit barcode-scanning 17.3.0（离线模型，scan_screen.kt）；扫到**仅选中不连接**（复用 parseManual，host[:port] 正则校验、端口缺省 8443）；未推流时每 30 秒重启 mDNS（不清列表），ServerCard「刷新」清列表重搜、「扫码」走 CAMERA 权限流程。MuMu 假相机能开扫码页但扫不到真码，识别效果需真机。
+- 选中项自动跟随（2026-11-25 用户拍板）：mDNS 解析到**同名**电脑且 host/port/httpPort 有变 → 自动更新选中项并持久化（discovery.kt `shouldFollowSelected`，单测 follow_update_test.kt）；扫码/手输的选中项 name=IP，与 mDNS 实例名不同名，不会被覆盖。
 - **Resampler 必须用整数相位累加**（posUnits 以 1/48000 采样为单位，`floorDiv`/`Math.floorMod`）：浮点 pos 跨 chunk 边界会因累加量级不同漂移出 1 LSB 差异，"任意分块输出逐位一致"是单测守住的不变量（resampler_test.kt）。
 - **MuMu 模拟器特性（adb 127.0.0.1:16384/16448，端口以 `adb devices` 实测为准；Android 12，已实测）**：
   - 默认平台 TLS 信任被放宽：自签证书直接过、`handshake.peerCertificates` 为空 → 全新安装不触发 TOFU 属正常；**自定义 TrustManager（pinning）不受影响**，三条信任路径（固定拒绝/TOFU 固定/固定接受）已用 prefs 注入法全部真机验证。
   - NsdManager 发现启动失败 code 0（NAT 网络），用手动输 IP 兜底；Go 端 mDNS 广播本身正常（Mac `dns-sd -B _phonemic._tcp local.` 可见）。
-  - adb UI 自动化：每次 tap 前必须 `exec-out screencap -p` 核对坐标（按钮位置随页面状态/滚动变化）；`pm grant com.afret0.phonemic android.permission.RECORD_AUDIO` 免弹窗；日志 `logcat -d -s CaStore:* MicEngine:*`；debug 包可 `run-as` 读写 shared_prefs（注入 ca_store.xml 可模拟证书更换）。
+  - adb UI 自动化：每次 tap 前必须 `exec-out screencap -p` 核对坐标（按钮位置随页面状态/滚动变化）；`pm grant com.afret0.phonemic android.permission.RECORD_AUDIO` 免弹窗；日志 `logcat -d -s CaStore:* MicEngine:* Discovery:* Scan:*`；debug 包可 `run-as` 读写 shared_prefs（注入 ca_store.xml 可模拟证书更换）。
   - 模拟器麦克风采零（电平恒 0）属正常，音质/息屏推流需真机验证。
 
 ## 契约（改动前必读，均已与用户确认）
@@ -55,5 +57,7 @@
 - 音频线上格式：48000Hz 单声道 Int16 LE 裸 PCM，WSS 二进制帧；无协议头。
 - 单路推流：新 WS 连接进来即踢旧连接（close 4001）；抖动缓冲目标 100ms、上限 300ms 超限丢最旧。
 - 证书：程序内置自签 CA（certs/ 目录持久化，SAN 含全部本机非回环 IP），HTTP :8080/ca.crt 供手机安装；不依赖 mkcert/caddy。
+- 桌面对外地址（2026-11-25 用户拍板，两轮）：地址列表/二维码/CA 链接一律走 `certs.ReachableIPv4s()`——剔除 169.254 链路本地后按档稳定排序：出口 IP（`net.Dial("udp","8.8.8.8:80")` 取 LocalAddr，不发包；非私网如 Clash TUN 198.18 段则弃用）> 192.168/16 > 其它私网 > 其余；二维码取第一个。证书 SAN 仍用 `LocalIPv4s()` 含全部非回环 IP，不受影响。**注意 `net.ParseIP` 返回 16 字节表示，按字节判网段必须先 `To4()`**。
+- mDNS 广播（2026-11-25 用户拍板）：`zeroconf.RegisterProxy` 只广播 `ReachableIPv4s()` 首位**一个** IP（所有网卡仍应答，TXT 契约不变，旧 app 也修好）——默认 `Register` 会把 Docker/WSL 等全部网卡 IP 塞进 A 记录，Android 随机挑一个导致连 172.17.0.1。**「按收包网卡回地址」方案不可行**：x/net ipv4 的 Windows `setControlMessage` 是空实现（errNotImplemented），收包 IfIndex 恒 0，会让 Windows 一条 A 记录都不回。host 仍用 `os.Hostname()`（与旧版一致，中文主机名实测可解析）。
 - 虚拟声卡名匹配：mac 找 "BlackHole"，win 找 "VB-Cable"/"CABLE Output"；找不到报错并提示 --install-driver，绝不静默落到扬声器（会啸叫）。
 - 驱动安装源：mac 用 brew cask API（formulae.brew.sh/api/cask/blackhole-2ch.json）取官方 pkg URL+sha256 校验后 installer 安装（卸载=删 /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver；装/卸后均需重启电脑生效）；win 用 vb-audio 官方 VBCABLE_Driver_Pack zip，UAC 提权跑官方 setup。

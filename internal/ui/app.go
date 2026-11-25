@@ -18,7 +18,7 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-const Version = "0.1.5"
+const Version = "0.1.6"
 
 type DeviceView struct {
 	Current string `json:"current"`
@@ -95,7 +95,7 @@ func (a *App) bindings() map[string]any {
 func (a *App) getState() (StateView, error) {
 	_, httpPort, _ := net.SplitHostPort(a.httpAddr)
 	var certURL string
-	if ips := certs.LocalIPv4s(); len(ips) > 0 {
+	if ips := certs.ReachableIPv4s(); len(ips) > 0 {
 		certURL = fmt.Sprintf("http://%s:%s/ca.crt", ips[0].String(), httpPort)
 	}
 	mic := "BlackHole 2ch"

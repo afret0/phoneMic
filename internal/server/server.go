@@ -361,7 +361,7 @@ func tlsPair(b *certs.Bundle) (tls.Certificate, error) {
 func BannerURLs(httpsAddr string) []string {
 	_, port, _ := net.SplitHostPort(httpsAddr)
 	var urls []string
-	for _, ip := range certs.LocalIPv4s() {
+	for _, ip := range certs.ReachableIPv4s() {
 		urls = append(urls, fmt.Sprintf("https://%s:%s", ip.String(), port))
 	}
 	return urls

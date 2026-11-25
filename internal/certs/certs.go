@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -47,6 +48,58 @@ func LocalIPv4s() []net.IP {
 		ips = append(ips, ip)
 	}
 	return ips
+}
+
+func ReachableIPv4s() []net.IP {
+	return reachableSorted(LocalIPv4s(), egressIPv4())
+}
+
+func egressIPv4() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		slog.Info("skip, 出口网卡探测失败, 地址排序回退 192.168 优先", "err", err.Error())
+		return nil
+	}
+	defer conn.Close()
+	addr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok || addr.IP.To4() == nil {
+		slog.Info("skip, 出口地址非 IPv4, 地址排序回退 192.168 优先")
+		return nil
+	}
+	ip := addr.IP.To4()
+	if !ip.IsPrivate() {
+		slog.Info("skip, 出口 IP 非私网疑似代理虚拟网卡, 地址排序回退 192.168 优先", "egress", ip.String())
+		return nil
+	}
+	return ip
+}
+
+func reachableSorted(all []net.IP, egress net.IP) []net.IP {
+	var ips []net.IP
+	for _, ip := range all {
+		if ip.IsLinkLocalUnicast() {
+			continue
+		}
+		ips = append(ips, ip)
+	}
+	slices.SortStableFunc(ips, func(a, b net.IP) int {
+		return addrRank(a, egress) - addrRank(b, egress)
+	})
+	return ips
+}
+
+func addrRank(ip net.IP, egress net.IP) int {
+	if egress != nil && ip.Equal(egress) {
+		return 0
+	}
+	if !ip.IsPrivate() {
+		return 3
+	}
+	v4 := ip.To4()
+	if v4[0] == 192 && v4[1] == 168 {
+		return 1
+	}
+	return 2
 }
 
 func Ensure(dir string, ips []net.IP) (*Bundle, error) {
