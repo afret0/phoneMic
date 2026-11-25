@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 data class Srv(val name: String, val host: String, val port: Int, val httpPort: Int)
 
-data class PcStatus(val device: String, val bufferedMs: Int, val streaming: Boolean, val sessionBytes: Long)
+data class PcStatus(val computer: String, val device: String, val bufferedMs: Int, val streaming: Boolean, val sessionBytes: Long)
 
 sealed interface Phase {
     data object Idle : Phase

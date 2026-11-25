@@ -258,6 +258,9 @@ fun App() {
                 }
             })
             Spacer(Modifier.height(12.dp))
+        } else {
+            ConnectedPcCard(selected)
+            Spacer(Modifier.height(12.dp))
         }
         Tiles()
         Spacer(Modifier.height(16.dp))
@@ -481,6 +484,27 @@ fun ServerCard(
             Spacer(Modifier.height(8.dp))
             Text("已选择: ${selected.host}:${selected.port}", color = Green, fontSize = 12.5.sp)
         }
+    }
+}
+
+@Composable
+fun ConnectedPcCard(selected: Srv?) {
+    val phase by MicState.phase.collectAsStateWithLifecycle()
+    val pc by MicState.pcStatus.collectAsStateWithLifecycle()
+    val title = if (phase is Phase.Streaming) "已连接电脑" else "目标电脑"
+    val name = pc?.computer?.takeIf { it.isNotEmpty() } ?: selected?.name ?: "-"
+    val addr = selected?.let { "${it.host}:${it.port}" } ?: "-"
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(name, color = Fg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(addr, color = Muted, fontSize = 12.5.sp)
     }
 }
 

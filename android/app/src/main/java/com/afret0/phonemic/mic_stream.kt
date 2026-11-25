@@ -3,6 +3,7 @@ package com.afret0.phonemic
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
+import java.net.URLEncoder
 import kotlin.coroutines.coroutineContext
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -51,6 +53,13 @@ class Resampler(srcRate: Int) {
         prev = input[n - 1]
         posUnits -= n.toLong() * rate
     }
+}
+
+private fun deviceName(): String {
+    val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
+    val model = Build.MODEL?.trim().orEmpty()
+    val name = if (manufacturer.isNotEmpty() && !model.startsWith(manufacturer, ignoreCase = true)) "$manufacturer $model" else model
+    return name.ifEmpty { "Android" }
 }
 
 class MicEngine(private val ctx: Context) {
@@ -97,8 +106,10 @@ class MicEngine(private val ctx: Context) {
     private suspend fun streamOnce(client: OkHttpClient, srv: Srv): Int {
         val opened = CompletableDeferred<Unit>()
         val closed = CompletableDeferred<Int>()
+        val name = deviceName()
+        val wsUrl = "wss://${srv.host}:${srv.port}/ws?name=" + URLEncoder.encode(name, "UTF-8")
         val ws = client.newWebSocket(
-            Request.Builder().url("wss://${srv.host}:${srv.port}/ws").build(),
+            Request.Builder().url(wsUrl).build(),
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     opened.complete(Unit)
@@ -123,7 +134,7 @@ class MicEngine(private val ctx: Context) {
             withTimeout(8000) { opened.await() }
             if (MicState.startedAt.value == 0L) MicState.startedAt.value = System.currentTimeMillis()
             MicState.phase.value = Phase.Streaming
-            Log.i(TAG, "done, WS 已连接开始采集, host: ${srv.host}")
+            Log.i(TAG, "done, WS 已连接开始采集, host: ${srv.host}, name: $name")
             captureLoop(ws, closed)
             return if (closed.isCompleted) closed.await() else -1
         } finally {
@@ -212,6 +223,7 @@ class MicEngine(private val ctx: Context) {
                     if (r.isSuccessful) {
                         val j = JSONObject(r.body?.string() ?: "{}")
                         MicState.pcStatus.value = PcStatus(
+                            computer = j.optString("computer", ""),
                             device = j.optString("device", "-"),
                             bufferedMs = j.optInt("bufferedMs", 0),
                             streaming = j.optBoolean("streaming", false),

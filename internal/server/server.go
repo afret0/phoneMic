@@ -29,6 +29,7 @@ const (
 type session struct {
 	conn      *websocket.Conn
 	remote    string
+	name      string
 	bytes     atomic.Uint64
 	frames    atomic.Uint64
 	startedAt time.Time
@@ -191,6 +192,7 @@ func (s *Server) Status() map[string]any {
 
 	status := map[string]any{
 		"streaming": cur != nil,
+		"computer":  computerName(),
 	}
 	if p := s.currentPlayer(); p != nil {
 		bufferedMs, dropOldest, underrun, written := p.JitterBuffer().Stats()
@@ -208,6 +210,7 @@ func (s *Server) Status() map[string]any {
 		status["sessionBytes"] = cur.bytes.Load()
 		status["sessionFrames"] = cur.frames.Load()
 		status["remote"] = cur.remote
+		status["sender"] = cur.name
 	}
 	return status
 }
@@ -219,14 +222,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess := &session{conn: conn, remote: r.RemoteAddr, startedAt: time.Now()}
+	sess := &session{conn: conn, remote: r.RemoteAddr, name: sanitizeSenderName(r.URL.Query().Get("name")), startedAt: time.Now()}
 	s.connMu.Lock()
 	old := s.current
 	s.current = sess
 	s.connMu.Unlock()
 
 	if old != nil {
-		slog.Info("hit, 新推流接入, 踢掉旧连接", "old", old.remote, "new", sess.remote)
+		slog.Info("hit, 新推流接入, 踢掉旧连接", "old", old.remote, "oldName", old.name, "new", sess.remote, "newName", sess.name)
 		_ = old.conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(kickCloseCode, "replaced by new sender"),
 			time.Now().Add(time.Second))
@@ -239,7 +242,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	} else {
 		slog.Info("hit, 无输出设备, 音频帧将被丢弃", "remote", sess.remote)
 	}
-	slog.Info("recv, 手机推流已连接", "remote", sess.remote)
+	slog.Info("recv, 手机推流已连接", "remote", sess.remote, "name", sess.name)
 
 	conn.SetReadLimit(wsReadLimit)
 	_ = conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
@@ -295,6 +298,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	fields := []any{
 		"remote", sess.remote,
+		"name", sess.name,
 		"durationSec", int(time.Since(sess.startedAt).Seconds()),
 		"sessionBytes", sess.bytes.Load(), "sessionFrames", sess.frames.Load(),
 	}
@@ -332,7 +336,7 @@ func (s *Server) statsLoop(ctx context.Context) {
 			if cur == nil {
 				continue
 			}
-			fields := []any{"remote", cur.remote, "sessionBytes", cur.bytes.Load()}
+			fields := []any{"remote", cur.remote, "name", cur.name, "sessionBytes", cur.bytes.Load()}
 			if p := s.currentPlayer(); p != nil {
 				bufferedMs, dropTotal, underrun, _ := p.JitterBuffer().Stats()
 				silentCb, totalCb := p.CallbackStats()

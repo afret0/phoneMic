@@ -345,7 +345,7 @@ footer .btn { margin-left: auto; }
     const st = $('strStatus');
     st.className = live ? 'status ok' : 'status';
     $('strText').textContent = live ? '手机在线' : '等待手机连接';
-    $('remoteText').textContent = live && s.remote ? s.remote : '';
+    $('remoteText').textContent = live ? [s.sender, s.remote].filter(Boolean).join(' · ') : '';
 
     const level = typeof s.level === 'number' ? s.level : 0;
     $('levelFill').style.width = Math.min(100, Math.round(Math.sqrt(level) * 100)) + '%';
