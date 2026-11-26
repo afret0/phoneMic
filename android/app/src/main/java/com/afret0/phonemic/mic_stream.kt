@@ -145,7 +145,7 @@ class MicEngine(private val ctx: Context) {
     private fun openRecord(): AudioRecord {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufBytes = maxOf(minBuf, FRAME_BYTES * 8)
-        for (src in intArrayOf(9, 6, 1)) {
+        for (src in intArrayOf(1, 6, 9)) {
             val r = runCatching {
                 AudioRecord(src, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufBytes)
             }.getOrNull()
