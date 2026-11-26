@@ -18,7 +18,7 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-const Version = "0.1.7"
+const Version = "0.1.8"
 
 type DeviceView struct {
 	Current string `json:"current"`

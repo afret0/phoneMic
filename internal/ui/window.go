@@ -31,6 +31,7 @@ func (a *App) runWindow() {
 	}
 	w.SetHtml(desktopHTML)
 	a.hookClose()
+	a.setWindowIcon()
 	slog.Info("done, 桌面窗口已打开")
 	w.Run()
 	slog.Info("done, 桌面窗口消息循环退出")
