@@ -13,7 +13,7 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e) => {
       if (typeof e.data.trimPpm === 'number') {
         this.trimPpm = e.data.trimPpm;
-        this.ratio = this.baseRatio / (1 + this.trimPpm / 1e6);
+        this.ratio = this.baseRatio * (1 + this.trimPpm / 1e6);
       }
     };
   }
