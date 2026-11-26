@@ -254,6 +254,79 @@ func driftSample(j *JitterBuffer, idx int) int16 {
 	return int16(binary.LittleEndian.Uint16(j.buf[idx*BytesPerSample:]))
 }
 
+func TestJitterBufferLowLatProfile(t *testing.T) {
+	j := NewJitterBuffer()
+	j.SetProfile(true)
+	if got := j.TargetMs(); got != LowLatTargetBufferMs {
+		t.Fatalf("低延迟目标: %d, want %d", got, LowLatTargetBufferMs)
+	}
+	j.Write(pcmSeq(1, lowLatTargetByte/BytesPerSample-1))
+	if !j.Read(make([]byte, 960)) {
+		t.Fatalf("差一个采样不应出声")
+	}
+	j.Write(pcmSeq(1, 1))
+	if j.Read(make([]byte, 960)) {
+		t.Fatalf("攒满 50ms 应出声")
+	}
+	j.SetProfile(true)
+	dropped := j.Write(pcmSeq(0, lowLatMaxByte/BytesPerSample+480))
+	if dropped != 960 {
+		t.Fatalf("低延迟上限 150ms 丢最旧, dropped: %d, want 960", dropped)
+	}
+	if ms, _, _, _ := j.Stats(); ms != LowLatMaxBufferMs {
+		t.Fatalf("低延迟缓冲上限: %d, want %d", ms, LowLatMaxBufferMs)
+	}
+}
+
+func TestJitterBufferLowLatDriftBands(t *testing.T) {
+	j := NewJitterBuffer()
+	j.SetProfile(true)
+	driftClock(j)
+	j.Write(make([]byte, 3601*BytesPerSample))
+	if trims, _, _ := j.DriftStats(); trims != 1 {
+		t.Fatalf("低延迟 75ms 多 1 采样应触发删, trims: %d", trims)
+	}
+	j.SetProfile(true)
+	driftClock(j)
+	j.mu.Lock()
+	j.primed = true
+	j.mu.Unlock()
+	j.Write(make([]byte, 1439*BytesPerSample))
+	if _, inserts, _ := j.DriftStats(); inserts != 1 {
+		t.Fatalf("低延迟 30ms 少 1 采样应触发插, inserts: %d", inserts)
+	}
+}
+
+func TestJitterBufferProfileSwitchRestoresDefault(t *testing.T) {
+	j := NewJitterBuffer()
+	j.SetProfile(true)
+	j.SetProfile(false)
+	if got := j.TargetMs(); got != TargetBufferMs {
+		t.Fatalf("回默认档目标: %d, want %d", got, TargetBufferMs)
+	}
+	j.Write(pcmSeq(1, lowLatTargetByte/BytesPerSample))
+	if !j.Read(make([]byte, 960)) {
+		t.Fatalf("默认档攒满 50ms 不应出声")
+	}
+	j.Write(pcmSeq(1, targetSamples()-lowLatTargetByte/BytesPerSample))
+	if j.Read(make([]byte, 960)) {
+		t.Fatalf("默认档攒满 100ms 应出声")
+	}
+}
+
+func TestJitterBufferResetKeepsProfile(t *testing.T) {
+	j := NewJitterBuffer()
+	j.SetProfile(true)
+	j.Write(pcmSeq(1, lowLatTargetByte/BytesPerSample))
+	j.Reset()
+	if got := j.TargetMs(); got != LowLatTargetBufferMs {
+		t.Fatalf("Reset 不应改档位, target: %d", got)
+	}
+	j.Write(pcmSeq(1, lowLatTargetByte/BytesPerSample))
+	if j.Read(make([]byte, 960)) {
+		t.Fatalf("Reset 后低延迟档仍应 50ms 出声")
+	}
+}
 func TestJitterBufferDriftBandBoundary(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -18,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private const val TAG = "MicService"
@@ -27,6 +30,7 @@ private const val NOTIF_ID = 1
 class MicService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -45,7 +49,20 @@ class MicService : Service() {
                 )
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phonemic:mic").apply { acquire(4 * 60 * 60 * 1000L) }
+                val wm = getSystemService(Context.WIFI_SERVICE) as WifiManager
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "phonemic:mic").apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
                 Log.i(TAG, "recv, 前台服务启动, host: $host, port: $port")
+                Log.i(TAG, "hit, WiFi 高性能锁已持有, 防省电模式引入延迟抖动")
+                scope.launch {
+                    while (isActive) {
+                        delay(3 * 60 * 60 * 1000L)
+                        wakeLock?.acquire(4 * 60 * 60 * 1000L)
+                        Log.i(TAG, "hit, CPU 锁续期, timeoutMs: ${4 * 60 * 60 * 1000L}")
+                    }
+                }
                 scope.launch { MicState.phase.collect { updateNotification(phaseText(it)) } }
                 scope.launch {
                     MicEngine(this@MicService).run(srv)
@@ -106,6 +123,8 @@ class MicService : Service() {
         scope.cancel()
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
         Log.i(TAG, "done, 前台服务已销毁")
         super.onDestroy()
     }

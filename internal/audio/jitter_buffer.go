@@ -20,23 +20,29 @@ const (
 	reprimeBufferByte = SampleRate * BytesPerSample * ReprimeBufferMs / 1000
 	fadeSamples       = SampleRate * FadeMs / 1000
 
-	driftHighByte      = SampleRate * BytesPerSample * 150 / 1000
-	driftLowByte       = SampleRate * BytesPerSample * 60 / 1000
-	driftPeriodSample  = SampleRate * 10 / 1000
-	driftWindowSample  = SampleRate * 15 / 1000
-	driftFadeSample    = SampleRate * 5 / 1000
-	driftPeriodByte    = driftPeriodSample * BytesPerSample
-	driftWindowByte    = driftWindowSample * BytesPerSample
-	driftFadeByte      = driftFadeSample * BytesPerSample
-	driftMinGap        = 10 * time.Second
-	driftForceWait     = 60 * time.Second
-	driftSilenceRms    = 0.0031623
-	driftSilenceEnergy = driftSilenceRms * driftSilenceRms * driftWindowSample
+	LowLatTargetBufferMs = 50
+	LowLatMaxBufferMs    = 150
+	lowLatTargetByte     = SampleRate * BytesPerSample * LowLatTargetBufferMs / 1000
+	lowLatMaxByte        = SampleRate * BytesPerSample * LowLatMaxBufferMs / 1000
+	driftPeriodSample    = SampleRate * 10 / 1000
+	driftWindowSample    = SampleRate * 15 / 1000
+	driftFadeSample      = SampleRate * 5 / 1000
+	driftPeriodByte      = driftPeriodSample * BytesPerSample
+	driftWindowByte      = driftWindowSample * BytesPerSample
+	driftFadeByte        = driftFadeSample * BytesPerSample
+	driftMinGap          = 10 * time.Second
+	driftForceWait       = 60 * time.Second
+	driftSilenceRms      = 0.0031623
+	driftSilenceEnergy   = driftSilenceRms * driftSilenceRms * driftWindowSample
 )
 
 type JitterBuffer struct {
 	mu           sync.Mutex
 	buf          []byte
+	targetByte   int
+	maxByte      int
+	driftHigh    int
+	driftLow     int
 	dropOldest   uint64
 	underrun     uint64
 	written      uint64
@@ -56,7 +62,42 @@ type JitterBuffer struct {
 }
 
 func NewJitterBuffer() *JitterBuffer {
-	return &JitterBuffer{nowFn: time.Now}
+	j := &JitterBuffer{nowFn: time.Now}
+	j.setProfileLocked(false)
+	return j
+}
+
+func (j *JitterBuffer) setProfileLocked(lowLat bool) {
+	j.targetByte, j.maxByte = targetBufferByte, maxBufferByte
+	if lowLat {
+		j.targetByte, j.maxByte = lowLatTargetByte, lowLatMaxByte
+	}
+	j.driftHigh = j.targetByte * 3 / 2
+	j.driftLow = j.targetByte * 3 / 5
+}
+
+func (j *JitterBuffer) SetProfile(lowLat bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.setProfileLocked(lowLat)
+	j.resetLocked()
+	slog.Info("hit, 缓冲档位已设置", "lowLat", lowLat,
+		"targetMs", j.targetByte*1000/(SampleRate*BytesPerSample),
+		"maxMs", j.maxByte*1000/(SampleRate*BytesPerSample),
+		"driftHighMs", j.driftHigh*1000/(SampleRate*BytesPerSample),
+		"driftLowMs", j.driftLow*1000/(SampleRate*BytesPerSample))
+}
+
+func (j *JitterBuffer) TargetMs() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.targetByte * 1000 / (SampleRate * BytesPerSample)
+}
+
+func (j *JitterBuffer) MaxMs() int {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.maxByte * 1000 / (SampleRate * BytesPerSample)
 }
 
 func (j *JitterBuffer) Write(pcm []byte) (droppedNow int) {
@@ -66,7 +107,7 @@ func (j *JitterBuffer) Write(pcm []byte) (droppedNow int) {
 	j.buf = append(j.buf, pcm...)
 	j.written += uint64(len(pcm))
 
-	overflow := len(j.buf) - maxBufferByte
+	overflow := len(j.buf) - j.maxByte
 	if overflow > 0 {
 		overflow += overflow % BytesPerSample
 		j.buf = append(j.buf[:0], j.buf[overflow:]...)
@@ -83,7 +124,7 @@ func (j *JitterBuffer) Read(out []byte) (silenceFilled bool) {
 	defer j.mu.Unlock()
 
 	if !j.primed {
-		threshold := targetBufferByte
+		threshold := j.targetByte
 		if j.reprime {
 			threshold = reprimeBufferByte
 		}
@@ -144,6 +185,10 @@ func (j *JitterBuffer) fillFadeOut(b []byte) {
 func (j *JitterBuffer) Reset() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.resetLocked()
+}
+
+func (j *JitterBuffer) resetLocked() {
 	j.buf = j.buf[:0]
 	j.primed = false
 	j.reprime = false
@@ -157,9 +202,9 @@ func (j *JitterBuffer) Reset() {
 
 func (j *JitterBuffer) adaptDrift(now time.Time) {
 	dir := 0
-	if len(j.buf) > driftHighByte {
+	if len(j.buf) > j.driftHigh {
 		dir = 1
-	} else if j.primed && len(j.buf) < driftLowByte {
+	} else if j.primed && len(j.buf) < j.driftLow {
 		dir = -1
 	}
 	if dir == 0 {

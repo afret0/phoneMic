@@ -27,6 +27,7 @@ object MicState {
     val agcOn = MutableStateFlow(false)
     val agcActive = MutableStateFlow(false)
     val agcAvailable = MutableStateFlow(true)
+    val lowLatency = MutableStateFlow(false)
 
     fun resetSession() {
         level.value = 0f

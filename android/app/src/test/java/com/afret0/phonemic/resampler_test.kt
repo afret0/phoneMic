@@ -14,11 +14,16 @@ class ResamplerTest {
     }
 
     @Test
-    fun downsample96kTakesEverySecondSample() {
-        val input = ShortArray(64) { (it * 100).toShort() }
-        val out = run(96000, listOf(input))
-        assertEquals(32, out.size)
-        for (i in out.indices) assertEquals(input[i * 2], out[i])
+    fun downsample96kPreservesDcAndAttenuatesNyquist() {
+        val dc = ShortArray(64) { 12000 }
+        val out = run(96000, listOf(dc))
+        assertEquals(30, out.size)
+        for (i in 8 until out.size) assertTrue("dc=${out[i]}", Math.abs(out[i] - 12000) <= 1)
+        val nyquist = ShortArray(256) { if (it % 2 == 0) 20000 else -20000 }
+        val filtered = run(96000, listOf(nyquist))
+        var peak = 0
+        for (i in 16 until filtered.size) peak = maxOf(peak, Math.abs(filtered[i].toInt()))
+        assertTrue("nyquist peak=$peak", peak < 4000)
     }
 
     @Test
@@ -38,7 +43,7 @@ class ResamplerTest {
         val input = ShortArray(441) { (it * 10).toShort() }
         val out = run(44100, listOf(input))
         assertEquals(0.toShort(), out.first())
-        assertTrue("out=${out.size}", out.size in 479..481)
+        assertTrue("out=${out.size}", out.size in 475..481)
         for (i in 1 until out.size) assertTrue(out[i] >= out[i - 1])
     }
 
@@ -135,6 +140,25 @@ class ResamplerTest {
         assertEquals(0, DriftTrim().update(80))
         assertEquals(-210, DriftTrim().update(79))
         assertEquals(0, DriftTrim().update(100))
+    }
+
+    @Test
+    fun driftTargetFollowsLowLatProfile() {
+        val d = DriftTrim()
+        d.setTarget(50)
+        assertEquals(0, d.update(70))
+        val d2 = DriftTrim()
+        d2.setTarget(50)
+        assertEquals(210, d2.update(71))
+        val d3 = DriftTrim()
+        d3.setTarget(50)
+        assertEquals(0, d3.update(30))
+        val d4 = DriftTrim()
+        d4.setTarget(50)
+        assertEquals(-210, d4.update(29))
+        d4.setTarget(100)
+        assertEquals(0, d4.ppm)
+        assertEquals(0, d4.update(100))
     }
 
     @Test

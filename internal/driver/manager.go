@@ -12,6 +12,7 @@ type State struct {
 	Busy        bool   `json:"busy"`
 	Op          string `json:"op"`
 	NeedsReboot bool   `json:"needsReboot"`
+	CableRate   int    `json:"cableRate"`
 	LastError   string `json:"lastError"`
 }
 
@@ -21,6 +22,7 @@ type Manager struct {
 	op          string
 	needsReboot bool
 	lastErr     string
+	cableRate   int
 }
 
 func NewManager() *Manager { return &Manager{} }
@@ -30,6 +32,15 @@ func (m *Manager) State() State {
 	st := State{Busy: m.busy, Op: m.op, NeedsReboot: m.needsReboot, LastError: m.lastErr}
 	m.mu.Unlock()
 	st.Installed, st.Loaded = Probe()
+	if st.Installed {
+		st.CableRate = CableRenderRate()
+	}
+	m.mu.Lock()
+	if st.CableRate != m.cableRate {
+		slog.Info("hit, 虚拟声卡系统默认采样率", "rate", st.CableRate)
+		m.cableRate = st.CableRate
+	}
+	m.mu.Unlock()
 	return st
 }
 

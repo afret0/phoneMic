@@ -32,8 +32,10 @@ type session struct {
 	conn      *websocket.Conn
 	remote    string
 	name      string
+	lowLat    bool
 	bytes     atomic.Uint64
 	frames    atomic.Uint64
+	dropped   atomic.Uint64
 	startedAt time.Time
 }
 
@@ -93,7 +95,7 @@ func (s *Server) SetPlayer(p *audio.Player) {
 	cur := s.current
 	s.connMu.Unlock()
 	if cur != nil && p != nil {
-		p.JitterBuffer().Reset()
+		p.JitterBuffer().SetProfile(cur.lowLat)
 	}
 	if old != nil {
 		old.Close()
@@ -260,6 +262,7 @@ func (s *Server) Status() map[string]any {
 		status["device"] = p.DeviceName()
 		status["level"] = p.Level()
 		status["bufferedMs"] = bufferedMs
+		status["bufferedTargetMs"] = p.JitterBuffer().TargetMs()
 		status["dropOldestBytes"] = dropOldest
 		status["underrunBytes"] = underrun
 		status["writtenBytes"] = written
@@ -273,6 +276,7 @@ func (s *Server) Status() map[string]any {
 	if cur != nil {
 		status["sessionBytes"] = cur.bytes.Load()
 		status["sessionFrames"] = cur.frames.Load()
+		status["dropSenderBytes"] = cur.dropped.Load()
 		status["remote"] = cur.remote
 		status["sender"] = cur.name
 	}
@@ -286,7 +290,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess := &session{conn: conn, remote: r.RemoteAddr, name: sanitizeSenderName(r.URL.Query().Get("name")), startedAt: time.Now()}
+	sess := &session{conn: conn, remote: r.RemoteAddr, name: sanitizeSenderName(r.URL.Query().Get("name")), lowLat: r.URL.Query().Get("lat") == "low", startedAt: time.Now()}
 	s.connMu.Lock()
 	old := s.current
 	s.current = sess
@@ -302,11 +306,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	player := s.currentPlayer()
 	if player != nil {
-		player.JitterBuffer().Reset()
+		player.JitterBuffer().SetProfile(sess.lowLat)
 	} else {
 		slog.Info("hit, 无输出设备, 音频帧将被丢弃", "remote", sess.remote)
 	}
-	slog.Info("recv, 手机推流已连接", "remote", sess.remote, "name", sess.name)
+	slog.Info("recv, 手机推流已连接", "remote", sess.remote, "name", sess.name, "lowLat", sess.lowLat)
 
 	conn.SetReadLimit(wsReadLimit)
 	_ = conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
@@ -343,12 +347,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		sess.frames.Add(1)
 		player = s.currentPlayer()
 		if player == nil {
+			sess.dropped.Add(uint64(len(data)))
 			continue
 		}
 		if dropped := player.JitterBuffer().Write(data); dropped > 0 && time.Since(lastOverflowLog) > time.Second {
 			lastOverflowLog = time.Now()
 			bufferedMs, dropTotal, _, _ := player.JitterBuffer().Stats()
-			slog.Info("hit, 缓冲超上限丢最旧音频", "判定", "buffered > 300ms", "droppedBytes", dropped, "bufferedMs", bufferedMs, "dropTotalBytes", dropTotal)
+			slog.Info("hit, 缓冲超上限丢最旧音频", "判定", "buffered > 上限", "maxMs", player.JitterBuffer().MaxMs(), "droppedBytes", dropped, "bufferedMs", bufferedMs, "dropTotalBytes", dropTotal)
 		}
 	}
 	close(pingDone)
@@ -406,7 +411,7 @@ func (s *Server) statsLoop(ctx context.Context) {
 				silentCb, totalCb := p.CallbackStats()
 				driftTrims, driftInserts, driftForced := p.JitterBuffer().DriftStats()
 				fields = append(fields,
-					"bufferedMs", bufferedMs, "bufferedTargetMs", audio.TargetBufferMs,
+					"bufferedMs", bufferedMs, "bufferedTargetMs", p.JitterBuffer().TargetMs(),
 					"dropTotalBytes", dropTotal, "underrunBytes", underrun,
 					"silentCallbacks", silentCb, "totalCallbacks", totalCb,
 					"driftTrims", driftTrims, "driftInserts", driftInserts, "driftForced", driftForced)

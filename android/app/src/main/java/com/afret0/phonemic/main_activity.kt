@@ -195,6 +195,7 @@ fun App() {
         }
         MicState.gain.value = loadGain(ctx)
         MicState.agcOn.value = loadAgc(ctx)
+        MicState.lowLatency.value = loadLowLat(ctx)
     }
 
     Column(
@@ -496,6 +497,7 @@ fun SoundCard() {
     val gain by MicState.gain.collectAsStateWithLifecycle()
     val agcOn by MicState.agcOn.collectAsStateWithLifecycle()
     val agcAvail by MicState.agcAvailable.collectAsStateWithLifecycle()
+    val lowLat by MicState.lowLatency.collectAsStateWithLifecycle()
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(16.dp),
     ) {
@@ -539,6 +541,26 @@ fun SoundCard() {
         if (!agcAvail) {
             Spacer(Modifier.height(6.dp))
             Text("此设备不支持自动增益，可拖动上方滑杆", color = Amber, fontSize = 11.5.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("低延迟模式", color = Fg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("电脑缓冲 100→50ms，重连后生效，弱 WiFi 易卡顿", color = Muted, fontSize = 11.5.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            Switch(
+                checked = lowLat,
+                onCheckedChange = {
+                    MicState.lowLatency.value = it
+                    saveLowLat(ctx, it)
+                },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Fg, checkedTrackColor = Indigo,
+                    uncheckedThumbColor = Muted, uncheckedTrackColor = Color(0xFF27273B),
+                    uncheckedBorderColor = BorderC,
+                ),
+            )
         }
     }
 }

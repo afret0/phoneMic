@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/afret0/phoneMic/internal/certs"
 	"github.com/afret0/phoneMic/internal/driver"
 	"github.com/afret0/phoneMic/internal/server"
+	"github.com/afret0/phoneMic/internal/update"
 	"github.com/afret0/phoneMic/internal/version"
 	qrcode "github.com/skip2/go-qrcode"
 	webview "github.com/webview/webview_go"
@@ -33,7 +35,10 @@ type StateView struct {
 	MicName   string         `json:"micName"`
 	Version   string         `json:"version"`
 	OS        string         `json:"os"`
+	Update    *update.Info   `json:"update"`
 }
+
+const playerStallTimeout = 3 * time.Second
 
 type App struct {
 	srv       *server.Server
@@ -46,6 +51,11 @@ type App struct {
 	match     string
 	connectMu sync.Mutex
 	done      atomic.Bool
+	update    atomic.Pointer[update.Info]
+
+	cbName  string
+	cbTotal uint64
+	cbSince time.Time
 
 	wv   webview.WebView
 	wvMu sync.Mutex
@@ -59,6 +69,7 @@ func NewApp(srv *server.Server, mgr *driver.Manager, match, httpsAddr, httpAddr 
 func (a *App) Run() {
 	go a.runTray()
 	go a.watch()
+	go func() { a.update.Store(update.Check(context.Background())) }()
 	a.runWindow()
 	a.stopTray()
 }
@@ -110,6 +121,7 @@ func (a *App) getState() (StateView, error) {
 		MicName:   mic,
 		Version:   version.Version,
 		OS:        runtime.GOOS,
+		Update:    a.update.Load(),
 	}, nil
 }
 
@@ -163,6 +175,7 @@ func (a *App) watch() {
 	for !a.done.Load() {
 		<-ticker.C
 		a.ensureDefaultPlayer()
+		a.checkPlayerAlive()
 	}
 }
 
@@ -185,4 +198,33 @@ func (a *App) ensureDefaultPlayer() {
 	if !st.Installed && has {
 		a.srv.SetPlayer(nil)
 	}
+}
+
+func (a *App) checkPlayerAlive() {
+	a.connectMu.Lock()
+	defer a.connectMu.Unlock()
+	name := a.srv.PlayerName()
+	if name == "" {
+		a.cbName = ""
+		return
+	}
+	total, _ := a.srv.Status()["totalCallbacks"].(uint64)
+	now := time.Now()
+	if name != a.cbName || total != a.cbTotal {
+		a.cbName, a.cbTotal, a.cbSince = name, total, now
+		return
+	}
+	if now.Sub(a.cbSince) < playerStallTimeout {
+		return
+	}
+	slog.Error("fail, 输出设备回调停止疑似失效, 重建播放器", "device", name, "totalCallbacks", total, "stalledSec", int(now.Sub(a.cbSince).Seconds()))
+	match := a.currentMatch()
+	p, err := audio.NewPlayer(match)
+	if err != nil {
+		slog.Error("fail, 失效播放器重建失败", "match", match, "err", err)
+		a.cbSince = now
+		return
+	}
+	a.srv.SetPlayer(p)
+	a.cbName, a.cbTotal, a.cbSince = p.DeviceName(), 0, now
 }

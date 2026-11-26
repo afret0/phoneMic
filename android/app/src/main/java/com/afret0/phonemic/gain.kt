@@ -11,6 +11,7 @@ import kotlin.math.tanh
 private const val TAG = "MicGain"
 private const val GAIN_KEY = "mic_gain"
 private const val AGC_KEY = "mic_agc"
+private const val LOWLAT_KEY = "mic_lowlat"
 private const val KNEE = 0.75f
 private const val NORM = 0.9760502f
 
@@ -50,6 +51,13 @@ fun loadAgc(ctx: Context): Boolean =
 
 fun saveAgc(ctx: Context, on: Boolean) {
     ctx.getSharedPreferences("phone_mic", Context.MODE_PRIVATE).edit().putBoolean(AGC_KEY, on).apply()
+}
+
+fun loadLowLat(ctx: Context): Boolean =
+    ctx.getSharedPreferences("phone_mic", Context.MODE_PRIVATE).getBoolean(LOWLAT_KEY, false)
+
+fun saveLowLat(ctx: Context, on: Boolean) {
+    ctx.getSharedPreferences("phone_mic", Context.MODE_PRIVATE).edit().putBoolean(LOWLAT_KEY, on).apply()
 }
 
 interface AgcHandle {

@@ -33,12 +33,25 @@ private const val FRAME_BYTES = FRAME_SAMPLES * 2
 private const val WS_QUEUE_DROP = 256 * 1024
 
 class Resampler(srcRate: Int) {
+    private val cutoff = minOf(1.0, SAMPLE_RATE.toDouble() / srcRate)
     private val baseUnits = srcRate.toLong() * FINE
     private val unitRate = SAMPLE_RATE.toLong() * FINE
     private var stepUnits = baseUnits
     private var trimPpm = 0
     private var posUnits = 0L
-    private var prev: Short = 0
+    private val hist = ShortArray(TAPS - 1)
+    private val kernel = Array(PHASES) { p ->
+        val frac = p.toDouble() / PHASES
+        val w = DoubleArray(TAPS) { j ->
+            val t = frac + (TAPS / 2 - 1) - j
+            val x = Math.PI * cutoff * t
+            val sinc = if (x == 0.0) 1.0 else kotlin.math.sin(x) / x
+            val win = 0.42 - 0.5 * kotlin.math.cos(2 * Math.PI * j / (TAPS - 1)) + 0.08 * kotlin.math.cos(4 * Math.PI * j / (TAPS - 1))
+            sinc * win
+        }
+        val sum = w.sum()
+        DoubleArray(TAPS) { w[it] / sum }
+    }
 
     fun setTrim(ppm: Int) {
         val p = ppm.coerceIn(-500, 500)
@@ -49,21 +62,40 @@ class Resampler(srcRate: Int) {
 
     fun process(input: ShortArray, n: Int, emit: (Short) -> Unit) {
         if (n <= 0) return
-        val limit = (n - 1).toLong() * unitRate
-        while (posUnits < limit) {
-            val i = posUnits.floorDiv(unitRate).toInt()
-            val frac = Math.floorMod(posUnits, unitRate).toDouble() / unitRate
-            val a = if (i < 0) prev else input[i]
-            val b = input[i + 1]
-            emit((a + (b - a) * frac).roundToInt().coerceIn(-32768, 32767).toShort())
-            posUnits += stepUnits
+        if (stepUnits == unitRate) {
+            val limit = (n - 1).toLong() * unitRate
+            while (posUnits < limit) {
+                val i = posUnits.floorDiv(unitRate).toInt()
+                emit(if (i < 0) hist[TAPS - 1 + i] else input[i])
+                posUnits += unitRate
+            }
+        } else {
+            val limit = (n - TAPS / 2).toLong() * unitRate
+            while (posUnits < limit) {
+                val i = posUnits.floorDiv(unitRate).toInt()
+                val phase = (Math.floorMod(posUnits, unitRate) * PHASES / unitRate).toInt()
+                val k = kernel[phase]
+                var acc = 0.0
+                for (j in 0 until TAPS) {
+                    val idx = i - (TAPS / 2 - 1) + j
+                    val s = if (idx < 0) hist[TAPS - 1 + idx] else input[idx]
+                    acc += s * k[j]
+                }
+                emit(acc.roundToInt().coerceIn(-32768, 32767).toShort())
+                posUnits += stepUnits
+            }
         }
-        prev = input[n - 1]
+        for (j in 0 until TAPS - 1) {
+            val idx = n - (TAPS - 1) + j
+            hist[j] = if (idx < 0) hist[TAPS - 1 + idx] else input[idx]
+        }
         posUnits -= n.toLong() * unitRate
     }
 
     companion object {
         private const val FINE = 1_000_000L
+        private const val TAPS = 8
+        private const val PHASES = 147
     }
 }
 
@@ -72,6 +104,13 @@ class DriftTrim {
         private set
     var ppm: Int = 0
         private set
+    private var targetMs = 100
+
+    fun setTarget(ms: Int) {
+        if (ms == targetMs) return
+        targetMs = ms
+        reset()
+    }
 
     fun reset() {
         ema = null
@@ -82,7 +121,7 @@ class DriftTrim {
         val prev = ema
         val e = if (prev == null) bufferedMs.toDouble() else prev + 0.3 * (bufferedMs - prev)
         ema = e
-        val err = e - 100
+        val err = e - targetMs
         ppm = if (Math.abs(err) > 20) Math.round(err * 10).toInt().coerceIn(-500, 500) else 0
         return ppm
     }
@@ -137,7 +176,8 @@ class MicEngine(private val ctx: Context) {
         val opened = CompletableDeferred<Unit>()
         val closed = CompletableDeferred<Int>()
         val name = localDeviceName(ctx)
-        val wsUrl = "wss://${srv.host}:${srv.port}/ws?name=" + URLEncoder.encode(name, "UTF-8")
+        val wsUrl = "wss://${srv.host}:${srv.port}/ws?name=" + URLEncoder.encode(name, "UTF-8") +
+            (if (MicState.lowLatency.value) "&lat=low" else "")
         val ws = client.newWebSocket(
             Request.Builder().url(wsUrl).build(),
             object : WebSocketListener() {
@@ -289,6 +329,7 @@ class MicEngine(private val ctx: Context) {
                         )
                         if (j.optBoolean("streaming", false) && j.has("bufferedMs")) {
                             val bufferedMs = j.optInt("bufferedMs", 0)
+                            drift.setTarget(j.optInt("bufferedTargetMs", 100))
                             val old = drift.ppm
                             val next = drift.update(bufferedMs)
                             if (next != old) Log.i(TAG, "hit, 时钟漂移微调, bufferedMs: $bufferedMs, ema: ${drift.ema}, trimPpm: $old -> $next")
