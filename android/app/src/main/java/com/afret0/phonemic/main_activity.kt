@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
@@ -31,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -44,6 +46,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +69,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.log10
 
 private val Bg = Color(0xFF0F0F23)
@@ -571,9 +575,10 @@ fun ConnectedPcCard(selected: Srv?) {
 }
 
 @Composable
-fun Tile(title: String, value: String, modifier: Modifier = Modifier) {
+fun Tile(title: String, value: String, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    val base = modifier.clip(RoundedCornerShape(16.dp)).background(CardBg)
     Column(
-        modifier.clip(RoundedCornerShape(16.dp)).background(CardBg).padding(14.dp),
+        (if (onClick != null) base.clickable(onClick = onClick) else base).padding(14.dp),
     ) {
         Text(title, color = Muted, fontSize = 12.sp)
         Spacer(Modifier.height(4.dp))
@@ -583,9 +588,34 @@ fun Tile(title: String, value: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun Tiles() {
+    val ctx = LocalContext.current
     val pc by MicState.pcStatus.collectAsStateWithLifecycle()
+    val selected by MicState.selected.collectAsStateWithLifecycle()
     val sent by MicState.sentBytes.collectAsStateWithLifecycle()
     val rate by MicState.deviceRate.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var devOpen by remember { mutableStateOf(false) }
+    var devList by remember { mutableStateOf<PcDeviceList?>(null) }
+    var devErr by remember { mutableStateOf<String?>(null) }
+    var devBusy by remember { mutableStateOf(false) }
+    var devTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(devOpen, devTick) {
+        if (!devOpen) return@LaunchedEffect
+        val srv = selected
+        if (srv == null) {
+            devErr = "先在下方选择或输入电脑地址"
+            return@LaunchedEffect
+        }
+        devErr = null
+        try {
+            devList = fetchPcDevices(ctx, srv)
+        } catch (e: Exception) {
+            android.util.Log.e("PcDevice", "fail, 设备列表获取失败, host: ${srv.host}, err: ${e.message ?: e.toString()}")
+            devErr = "获取设备列表失败: " + (e.message ?: e.toString())
+        }
+    }
+
     val rateText = when {
         rate == 0 -> "48 kHz"
         rate == 48000 -> "48 kHz"
@@ -593,12 +623,109 @@ fun Tiles() {
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Tile("声音写入设备(虚拟声卡)", pc?.device ?: "-", Modifier.weight(1f))
+            Tile(
+                "声音写入设备(虚拟声卡)",
+                if (pc?.device.isNullOrEmpty()) "点按选择" else pc!!.device,
+                Modifier.weight(1f),
+            ) { devOpen = true }
             Tile("电脑缓冲", "${pc?.bufferedMs ?: 0} ms", Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Tile("已发送", fmtBytes(sent), Modifier.weight(1f))
             Tile("采样率", rateText, Modifier.weight(1f))
         }
+    }
+    if (devOpen) {
+        DevicePickDialog(
+            list = devList, err = devErr, busy = devBusy,
+            onRefresh = { devTick++ },
+            onPick = { name ->
+                val srv = selected
+                if (srv == null || devBusy) return@DevicePickDialog
+                scope.launch {
+                    devBusy = true
+                    devErr = null
+                    try {
+                        switchPcDevice(ctx, srv, name)
+                        devList = fetchPcDevices(ctx, srv)
+                    } catch (e: Exception) {
+                        android.util.Log.e("PcDevice", "fail, 设备切换失败, host: ${srv.host}, name: $name, err: ${e.message ?: e.toString()}")
+                        devErr = "切换声音写入设备失败: " + (e.message ?: e.toString())
+                    }
+                    devBusy = false
+                }
+            },
+            onDismiss = { devOpen = false },
+        )
+    }
+}
+
+@Composable
+fun DevicePickDialog(
+    list: PcDeviceList?, err: String?, busy: Boolean,
+    onRefresh: () -> Unit, onPick: (String) -> Unit, onDismiss: () -> Unit,
+) {
+    val selName = pickedDeviceName(list)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CardBg,
+        title = { Text("选择声音写入设备", color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                if (list == null && err == null) Text("加载中…", color = Muted, fontSize = 13.sp)
+                list?.let { l ->
+                    DeviceRow("自动(虚拟声卡)", "跟随电脑默认虚拟声卡", selName == "", busy) { onPick("") }
+                    l.devices.forEach { d ->
+                        DeviceRow(d.name, if (d.isDefault) "系统默认" else "", selName == d.name, busy) { onPick(d.name) }
+                    }
+                }
+                if (err != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(err, color = Danger, fontSize = 12.5.sp)
+                }
+                if (list != null && list.current.isNotEmpty() && !isVirtualDevice(list.current)) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "正在写入物理扬声器：手机声音会从音响外放，可能被手机再次拾取产生啸叫。建议选虚拟声卡。",
+                        color = Amber, fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .background(Amber.copy(alpha = 0.10f)).padding(10.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Text(
+                "关闭", color = Muted, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onDismiss)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                if (busy) "刷新中…" else "刷新", color = Green, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(enabled = !busy, onClick = onRefresh)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            )
+        },
+    )
+}
+
+@Composable
+private fun DeviceRow(name: String, sub: String, sel: Boolean, busy: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(if (sel) Green.copy(alpha = 0.10f) else Color.Transparent)
+            .clickable(enabled = !busy, onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (sel) Green else Muted))
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, color = Fg, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (sub.isNotEmpty()) Text(sub, color = Muted, fontSize = 12.sp)
+        }
+        if (sel) Text("✓", color = Green, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
 }

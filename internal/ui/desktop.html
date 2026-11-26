@@ -294,8 +294,8 @@ footer .btn { margin-left: auto; }
       sel.appendChild(auto);
       (list || []).forEach(d => {
         const o = document.createElement('option');
-        o.value = d.Name;
-        o.textContent = d.Name + (d.IsDefault ? ' (系统默认)' : '');
+        o.value = d.name;
+        o.textContent = d.name + (d.isDefault ? ' (系统默认)' : '');
         sel.appendChild(o);
       });
       if (selectName !== undefined) sel.value = selectName;

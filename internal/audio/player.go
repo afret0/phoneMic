@@ -13,8 +13,8 @@ import (
 )
 
 type OutputDevice struct {
-	Name      string
-	IsDefault bool
+	Name      string `json:"name"`
+	IsDefault bool   `json:"isDefault"`
 }
 
 func ListOutputDevices() ([]OutputDevice, error) {

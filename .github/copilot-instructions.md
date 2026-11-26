@@ -35,6 +35,7 @@
 
 ## 版本与交付惯例（2026-11-26 用户拍板：每次构建版本号 +1，任务完成后自动重启桌面+部署手机）
 
+- **手机侧改动双端同步（2026-11-26 用户拍板）**：所有 app（手机）侧功能改动必须同步落到 Android APK（android/）与手机网页（web/static/index.html）两端，功能与交互口径一致，只改一端视为未完成；服务端能力（HTTP/WS 接口）一次实现、两端复用。桌面端不受此条约束。
 - **每次构建版本号 +1**：仓库根 `build.ps1` 以 gradle `versionName` 为唯一源，自动末位 +1、`versionCode` +1，并同步 `internal/version/version.go`（Go 侧唯一版本常量，ui 与 server 都读它）。不要再手动双写版本号。
 - **三端右下角版本号**（fixed/overlay 常显，2026-11-26 用户拍板三端都加）：桌面 `desktop.html` 的 `.ver`（fixed 右下，数据 GetState.version）；手机网页 `index.html` 的 `#ver`（数据来自 `/status` 的 `version` 字段）；Android `main_activity.kt` 用 `BuildConfig.VERSION_NAME`（gradle 已开 `buildConfig = true`），以 fillMaxSize+wrapContentSize(BottomEnd) 的兄弟 overlay 盖在屏幕右下角（与 ScanScreen 同模式）。
 - **每次任务完成后（本轮有改动要提交时）自动走完全流程，不逐步询问**：最小验证（`CGO_ENABLED=1 go test ./...` + Android 单测）→ `.\build.ps1`（bump → 双端构建 → 拷 Downloads → 重启桌面 → 装手机）→ 验证部署结果（桌面 `/status.version`、手机 `dumpsys package` versionName + 截图右下角）→ commit → push。验证/构建失败不提交不 push，先报告。只读任务不触发。

@@ -81,11 +81,11 @@ func (a *App) currentMatch() string {
 func (a *App) bindings() map[string]any {
 	return map[string]any{
 		"GetState":        a.getState,
-		"ListDevices":     a.listDevices,
+		"ListDevices":     a.ListDevices,
 		"InstallDriver":   a.installDriver,
 		"UninstallDriver": a.uninstallDriver,
 		"UpdateDriver":    a.updateDriver,
-		"SwitchDevice":    a.switchDevice,
+		"SwitchDevice":    a.SwitchDevice,
 		"QR":              a.qr,
 		"QuitApp":         func() { a.Quit() },
 	}
@@ -113,7 +113,7 @@ func (a *App) getState() (StateView, error) {
 	}, nil
 }
 
-func (a *App) listDevices() ([]audio.OutputDevice, error) {
+func (a *App) ListDevices() ([]audio.OutputDevice, error) {
 	devices, err := audio.ListOutputDevices()
 	if err != nil {
 		slog.Error("fail, 枚举输出设备失败", "err", err)
@@ -126,7 +126,11 @@ func (a *App) installDriver() bool   { return a.mgr.TriggerInstall() }
 func (a *App) uninstallDriver() bool { return a.mgr.TriggerUninstall() }
 func (a *App) updateDriver() bool    { return a.mgr.TriggerUpdate() }
 
-func (a *App) switchDevice(name string) error {
+func (a *App) DeviceAuto() bool {
+	return a.currentMatch() == driver.DefaultMatch
+}
+
+func (a *App) SwitchDevice(name string) error {
 	a.connectMu.Lock()
 	defer a.connectMu.Unlock()
 	match := name

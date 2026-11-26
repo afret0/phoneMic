@@ -114,6 +114,9 @@ func main() {
 	}()
 
 	app := ui.NewApp(srv, mgr, *device, *httpsAddr, *httpAddr, stop)
+	srv.ListDevices = app.ListDevices
+	srv.SwitchDevice = app.SwitchDevice
+	srv.DeviceAuto = app.DeviceAuto
 	go single.WatchQuit(app.Quit)
 	go func() {
 		select {

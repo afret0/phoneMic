@@ -127,6 +127,40 @@ header { display: flex; align-items: center; gap: 10px; width: 100%; margin-bott
 .tile .k svg { width: 13px; height: 13px; stroke: var(--muted-fg); flex: none; }
 .tile .v { font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile.wide { grid-column: 1 / -1; }
+button.tile { text-align: left; color: inherit; font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+button.tile:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+button.tile .v { display: block; }
+.tile .k .chev { width: 13px; height: 13px; stroke: var(--muted-fg); margin-left: auto; flex: none; transition: transform 200ms ease; }
+button.tile[aria-expanded="true"] .k .chev { transform: rotate(180deg); }
+
+#devPanel .vizHead { margin-bottom: 4px; }
+.miniBtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; padding: 0 12px;
+  background: none; border: 1px solid var(--muted); border-radius: 10px;
+  color: var(--muted-fg); font-size: 12.5px; font-weight: 600; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.miniBtn svg { width: 14px; height: 14px; stroke: currentColor; }
+.miniBtn:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.miniBtn:disabled { opacity: 0.5; }
+.devRow {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  min-height: 48px; padding: 8px 10px;
+  background: none; border: none; border-radius: 12px;
+  color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.devRow:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.devRow .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748B; flex: none; }
+.devRow .devName { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.devRow .devName small { display: block; font-size: 11.5px; color: var(--muted-fg); font-weight: 400; }
+.devRow .check { width: 16px; height: 16px; stroke: var(--accent); flex: none; visibility: hidden; }
+.devRow[aria-checked="true"] { background: rgba(34, 197, 94, 0.10); }
+.devRow[aria-checked="true"] .dot { background: var(--accent); box-shadow: 0 0 8px rgba(34, 197, 94, 0.8); }
+.devRow[aria-checked="true"] .check { visibility: visible; }
+.devWarn { margin-top: 8px; font-size: 12px; color: #F59E0B; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px; padding: 8px 10px; }
+.devPh { font-size: 13px; color: var(--muted-fg); padding: 8px 10px; }
 
 #err {
   width: 100%; display: none; align-items: flex-start; gap: 10px;
@@ -239,10 +273,25 @@ footer { margin-top: 6px; font-size: 11.5px; color: #64748B; text-align: center;
 
   <div class="stats">
     <div class="tile wide"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>电脑</div><div class="v" id="computer">-</div></div>
-    <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>声音写入设备(虚拟声卡)</div><div class="v" id="device">-</div></div>
+    <button class="tile" id="devTile" type="button" aria-expanded="false" aria-controls="devPanel" aria-label="声音写入设备,点按选择"><span class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>声音写入设备(虚拟声卡)<svg class="chev" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span><span class="v" id="device">-</span></button>
     <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>电脑缓冲</div><div class="v" id="buffered">-</div></div>
     <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><path d="M12 20h.01"/></svg>已发送</div><div class="v" id="sent">0 KB</div></div>
     <div class="tile"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"/></svg>采样率</div><div class="v" id="rate">48 kHz</div></div>
+  </div>
+
+  <div class="card" id="devPanel" hidden>
+    <div class="vizHead">
+      <span class="label">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        选择声音写入设备
+      </span>
+      <button class="miniBtn" id="devRefresh" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        刷新
+      </button>
+    </div>
+    <div id="devList" role="radiogroup" aria-label="声音写入设备列表"></div>
+    <div class="devWarn" id="devWarn" hidden>正在写入物理扬声器：手机声音会从音响外放，可能被手机再次拾取产生啸叫。建议选虚拟声卡。</div>
   </div>
 
   <details class="card" id="setup">
@@ -324,6 +373,95 @@ function pushLevel(v) {
   const db = curLevel > 0.0001 ? (20 * Math.log10(curLevel)).toFixed(0) : '--';
   $('db').textContent = db + ' dB';
 }
+
+const devTile = $('devTile'), devPanel = $('devPanel'), devList = $('devList');
+let devInfo = null, devBusy = false;
+const isVirtualDev = n => /cable|blackhole/i.test(n || '');
+
+function renderDevList() {
+  devList.innerHTML = '';
+  if (!devInfo) {
+    const ph = document.createElement('div');
+    ph.className = 'devPh';
+    ph.textContent = '加载中…';
+    devList.appendChild(ph);
+    return;
+  }
+  const rows = [{ name: '', label: '自动(虚拟声卡)', sub: '跟随电脑默认虚拟声卡' }];
+  (devInfo.devices || []).forEach(d => rows.push({ name: d.name, label: d.name, sub: d.isDefault ? '系统默认' : '' }));
+  const selName = devInfo.auto || !devInfo.current ? '' : devInfo.current;
+  rows.forEach(row => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'devRow';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(row.name === selName));
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    const nm = document.createElement('span');
+    nm.className = 'devName';
+    nm.textContent = row.label;
+    nm.title = row.label;
+    if (row.sub) {
+      const sm = document.createElement('small');
+      sm.textContent = row.sub;
+      nm.appendChild(sm);
+    }
+    const ck = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    ck.setAttribute('viewBox', '0 0 24 24');
+    ck.setAttribute('fill', 'none');
+    ck.setAttribute('stroke-width', '2.5');
+    ck.setAttribute('stroke-linecap', 'round');
+    ck.setAttribute('stroke-linejoin', 'round');
+    ck.setAttribute('class', 'check');
+    ck.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M20 6 9 17l-5-5');
+    ck.appendChild(p);
+    b.append(dot, nm, ck);
+    b.onclick = () => switchDev(row.name);
+    devList.appendChild(b);
+  });
+  $('devWarn').hidden = !devInfo.current || isVirtualDev(devInfo.current);
+}
+
+async function loadDevList() {
+  try {
+    const r = await fetch('/devices');
+    if (!r.ok) throw new Error(await r.text() || ('HTTP ' + r.status));
+    devInfo = await r.json();
+    renderDevList();
+  } catch (e) {
+    devList.innerHTML = '';
+    const ph = document.createElement('div');
+    ph.className = 'devPh';
+    ph.textContent = '获取设备列表失败: ' + e.message;
+    devList.appendChild(ph);
+  }
+}
+
+async function switchDev(name) {
+  if (devBusy) return;
+  devBusy = true;
+  try {
+    const r = await fetch('/device', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    if (!r.ok) throw new Error(await r.text() || ('HTTP ' + r.status));
+    await loadDevList();
+    pollStatus();
+  } catch (e) {
+    showErr('切换声音写入设备失败: ' + e.message);
+  } finally {
+    devBusy = false;
+  }
+}
+
+devTile.onclick = () => {
+  const open = devPanel.hidden;
+  devPanel.hidden = !open;
+  devTile.setAttribute('aria-expanded', String(open));
+  if (open) loadDevList();
+};
+$('devRefresh').onclick = () => loadDevList();
 
 async function pollStatus() {
   try {

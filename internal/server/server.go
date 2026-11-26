@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -40,6 +41,10 @@ type Server struct {
 	bundle    *certs.Bundle
 	httpsAddr string
 	httpAddr  string
+
+	ListDevices  func() ([]audio.OutputDevice, error)
+	SwitchDevice func(name string) error
+	DeviceAuto   func() bool
 
 	playerMu sync.RWMutex
 	player   *audio.Player
@@ -105,6 +110,8 @@ func (s *Server) Run(ctx context.Context) error {
 	httpsMux.Handle("/", http.FileServer(http.FS(staticSub)))
 	httpsMux.HandleFunc("/ws", s.handleWS)
 	httpsMux.HandleFunc("/status", s.handleStatus)
+	httpsMux.HandleFunc("/devices", s.handleDevices)
+	httpsMux.HandleFunc("/device", s.handleDeviceSwitch)
 	httpsMux.HandleFunc("/ca.crt", s.serveCA)
 
 	httpMux := http.NewServeMux()
@@ -177,6 +184,57 @@ func (s *Server) serveCA(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.Status())
+}
+
+func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.ListDevices == nil {
+		slog.Error("fail, 设备列表接口未接线")
+		http.Error(w, "device list unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	devices, err := s.ListDevices()
+	if err != nil {
+		slog.Error("fail, 枚举输出设备失败", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"devices": devices,
+		"current": s.PlayerName(),
+		"auto":    s.DeviceAuto != nil && s.DeviceAuto(),
+	})
+}
+
+func (s *Server) handleDeviceSwitch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.SwitchDevice == nil {
+		slog.Error("fail, 设备切换接口未接线")
+		http.Error(w, "device switch unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		slog.Error("fail, 设备切换请求解析失败", "remote", r.RemoteAddr, "err", err)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	slog.Info("recv, 手机端切换声音写入设备", "remote", r.RemoteAddr, "name", req.Name)
+	if err := s.SwitchDevice(req.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"current": s.PlayerName()})
 }
 
 func (s *Server) PlayerName() string {
