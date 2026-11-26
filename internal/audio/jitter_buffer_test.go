@@ -3,6 +3,7 @@ package audio
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 	"testing"
 )
 
@@ -42,8 +43,14 @@ func TestJitterBufferPriming(t *testing.T) {
 			if c.wantSilence && !bytes.Equal(out, make([]byte, 960)) {
 				t.Fatalf("未达标时输出必须全零")
 			}
-			if !c.wantSilence && binary.LittleEndian.Uint16(out) != 1 {
-				t.Fatalf("达标后应输出真实数据, 首采样: %d", binary.LittleEndian.Uint16(out))
+			if !c.wantSilence {
+				if binary.LittleEndian.Uint16(out) != 0 {
+					t.Fatalf("淡入首采样必须为 0, 实际: %d", int16(binary.LittleEndian.Uint16(out)))
+				}
+				got := binary.LittleEndian.Uint16(out[fadeSamples*BytesPerSample:])
+				if got != uint16(1+fadeSamples) {
+					t.Fatalf("淡入结束后应输出原始数据, 采样序号: %d, want %d", got, 1+fadeSamples)
+				}
 			}
 		})
 	}
@@ -92,19 +99,114 @@ func TestJitterBufferUnderrunPartialFill(t *testing.T) {
 	if !silence {
 		t.Fatalf("数据不足应报 silenceFilled")
 	}
-	if binary.LittleEndian.Uint16(out) != 7 {
-		t.Fatalf("已有数据应先输出, 首采样: %d", binary.LittleEndian.Uint16(out))
+	if binary.LittleEndian.Uint16(out) != 0 {
+		t.Fatalf("淡入首采样必须为 0, 实际: %d", int16(binary.LittleEndian.Uint16(out)))
 	}
-	if !bytes.Equal(out[targetBufferByte:], make([]byte, targetBufferByte)) {
-		t.Fatalf("缺口必须补零")
+	if got := binary.LittleEndian.Uint16(out[fadeSamples*BytesPerSample:]); got != uint16(7+fadeSamples) {
+		t.Fatalf("已有数据应先输出(淡入区外无衰减), 采样序号: %d, want %d", got, 7+fadeSamples)
+	}
+	if !bytes.Equal(out[targetBufferByte+fadeSamples*BytesPerSample:], make([]byte, targetBufferByte-fadeSamples*BytesPerSample)) {
+		t.Fatalf("淡出结束后缺口必须补零")
 	}
 	_, _, underrun, _ := j.Stats()
 	if underrun != uint64(targetBufferByte) {
 		t.Fatalf("underrun: %d, want %d", underrun, targetBufferByte)
 	}
-	j.Write(pcmSeq(9, 100))
+}
+
+func TestJitterBufferReprimeThreshold(t *testing.T) {
+	cases := []struct {
+		name        string
+		writeBytes  int
+		wantSilence bool
+	}{
+		{"刚好达标", reprimeBufferByte, false},
+		{"差一个采样不达标", reprimeBufferByte - BytesPerSample, true},
+		{"空缓冲", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			j := NewJitterBuffer()
+			j.Write(pcmSeq(1, targetSamples()))
+			j.Read(make([]byte, targetBufferByte*2))
+			if c.writeBytes > 0 {
+				j.Write(pcmSeq(1, c.writeBytes/BytesPerSample))
+			}
+			silence := j.Read(make([]byte, 960))
+			if silence != c.wantSilence {
+				t.Fatalf("silence = %t, want %t (writeBytes: %d, reprime: %d)", silence, c.wantSilence, c.writeBytes, reprimeBufferByte)
+			}
+		})
+	}
+}
+
+func TestJitterBufferReprimeOnlyAfterUnderrun(t *testing.T) {
+	j := NewJitterBuffer()
+	j.Write(pcmSeq(1, targetSamples()))
+	j.Read(make([]byte, targetBufferByte*2))
+	j.Reset()
+	j.Write(pcmSeq(1, reprimeBufferByte/BytesPerSample))
 	if !j.Read(make([]byte, 960)) {
-		t.Fatalf("underrun 后必须重新攒够目标量才恢复输出")
+		t.Fatalf("Reset 后首次攒量仍须满 %dms, %dms 不应出声", TargetBufferMs, ReprimeBufferMs)
+	}
+}
+
+func TestJitterBufferFadeOutDecay(t *testing.T) {
+	j := NewJitterBuffer()
+	j.Write(bytes.Repeat([]byte{0x20, 0x4E}, targetSamples()))
+	j.Read(make([]byte, 960))
+	realLeft := targetSamples() - 480
+	out := make([]byte, (realLeft+200)*BytesPerSample)
+	if !j.Read(out) {
+		t.Fatalf("数据不足应报 silenceFilled")
+	}
+	gap := out[realLeft*BytesPerSample:]
+	first := int16(binary.LittleEndian.Uint16(gap))
+	if math.Abs(float64(first)-20000) > 20000.0/float64(fadeSamples)+1 {
+		t.Fatalf("淡出首采样必须贴近末真实采样 20000, 实际: %d", first)
+	}
+	prev := int16(20000)
+	for i := 0; i < 200; i++ {
+		v := int16(binary.LittleEndian.Uint16(gap[i*BytesPerSample:]))
+		if v > prev || v < 0 {
+			t.Fatalf("淡出必须单调衰减到 0, 第 %d 采样: %d, 前值: %d", i, v, prev)
+		}
+		prev = v
+	}
+	sil := make([]byte, 960)
+	if !j.Read(sil) {
+		t.Fatalf("未攒够恢复阈值应继续静音")
+	}
+	border := int16(binary.LittleEndian.Uint16(sil))
+	if math.Abs(float64(border)-float64(prev)) > 20000.0/float64(fadeSamples)+1 {
+		t.Fatalf("淡出跨回调必须连续, 边界前值: %d, 边界后值: %d", prev, border)
+	}
+	if !bytes.Equal(sil[(fadeSamples-200)*BytesPerSample:], make([]byte, 960-(fadeSamples-200)*BytesPerSample)) {
+		t.Fatalf("淡出走完 %d 采样后必须全零", fadeSamples)
+	}
+}
+
+func TestJitterBufferFadeOutNegativeSignal(t *testing.T) {
+	j := NewJitterBuffer()
+	j.Write(bytes.Repeat([]byte{0x20, 0xD1}, targetSamples()))
+	j.Read(make([]byte, 960))
+	realLeft := targetSamples() - 480
+	out := make([]byte, (realLeft+100)*BytesPerSample)
+	j.Read(out)
+	gap := out[realLeft*BytesPerSample:]
+	if got := int16(binary.LittleEndian.Uint16(gap)); math.Abs(float64(got)-(-11950)) > 1 {
+		t.Fatalf("负信号淡出首采样: %d, want -11950±1", got)
+	}
+	if got := int16(binary.LittleEndian.Uint16(gap[99*BytesPerSample:])); math.Abs(float64(got)-(-7000)) > 1 {
+		t.Fatalf("负信号淡出第 100 采样: %d, want -7000±1", got)
+	}
+	sil := make([]byte, 960)
+	j.Read(sil)
+	if got := int16(binary.LittleEndian.Uint16(sil)); math.Abs(float64(got)-(-6950)) > 1 {
+		t.Fatalf("负信号淡出跨回调续接: %d, want -6950±1", got)
+	}
+	if !bytes.Equal(sil[140*BytesPerSample:], make([]byte, 960-140*BytesPerSample)) {
+		t.Fatalf("负信号淡出走完后必须全零")
 	}
 }
 
@@ -120,8 +222,8 @@ func TestJitterBufferSequentialContinuity(t *testing.T) {
 		got = append(got, out...)
 	}
 	want := pcmSeq(0, targetSamples()*2)
-	if !bytes.Equal(got, want) {
-		t.Fatalf("多次读取必须保持采样连续")
+	if !bytes.Equal(got[fadeSamples*BytesPerSample:], want[fadeSamples*BytesPerSample:]) {
+		t.Fatalf("淡入区之外多次读取必须保持采样连续")
 	}
 }
 
