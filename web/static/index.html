@@ -121,6 +121,45 @@ header { display: flex; align-items: center; gap: 10px; width: 100%; margin-bott
 #db { font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 #viz { width: 100%; height: 92px; display: block; }
 
+.soundRow { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.soundRow .sLabel { font-size: 12.5px; color: var(--muted-fg); font-weight: 600; flex: none; }
+#gainVal { font-size: 12.5px; color: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; flex: none; }
+#gain { flex: 1; min-width: 0; appearance: none; -webkit-appearance: none; height: 44px; background: transparent; cursor: pointer; --fill: 0%; }
+#gain::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(to right, var(--secondary) var(--fill), var(--muted) var(--fill));
+}
+#gain::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; margin-top: -8px;
+  background: var(--fg); border: 2px solid var(--secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+#gain::-moz-range-track { height: 6px; border-radius: 999px; background: var(--muted); }
+#gain::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--secondary); }
+#gain::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--fg); border: 2px solid var(--secondary); }
+#gain:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 10px; }
+.switchRow {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 44px; cursor: pointer; position: relative;
+}
+.switchRow .sLabel { font-size: 13px; color: var(--fg); font-weight: 500; }
+.switchRow .sHint { font-size: 11.5px; color: var(--muted-fg); font-weight: 400; }
+.switchRow input { position: absolute; right: 0; top: 0; width: 44px; height: 44px; opacity: 0; margin: 0; cursor: pointer; }
+.switch {
+  width: 44px; height: 26px; border-radius: 999px; flex: none;
+  background: var(--muted); border: 1px solid var(--border);
+  position: relative; transition: background 180ms ease, border-color 180ms ease;
+}
+.switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--muted-fg); transition: transform 180ms ease, background 180ms ease;
+}
+.switchRow input:checked ~ .switch { background: var(--secondary); border-color: rgba(99, 102, 241, 0.6); }
+.switchRow input:checked ~ .switch::after { transform: translateX(18px); background: var(--fg); }
+.switchRow input:focus-visible ~ .switch { outline: 2px solid var(--ring); outline-offset: 2px; }
+.switchRow input:disabled ~ .switch { opacity: 0.4; }
+#agcNote { display: none; font-size: 11.5px; color: #F59E0B; margin-bottom: 2px; }
+
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; margin-bottom: 12px; }
 .tile { background: var(--card); border: 1px solid var(--muted); border-radius: 14px; padding: 11px 13px; min-width: 0; }
 .tile .k { font-size: 11.5px; color: var(--muted-fg); font-weight: 500; letter-spacing: 0.3px; margin-bottom: 3px; display: flex; align-items: center; gap: 5px; }
@@ -269,6 +308,17 @@ footer { margin-top: 6px; font-size: 11.5px; color: #64748B; text-align: center;
       <span id="db">-- dB</span>
     </div>
     <canvas id="viz" aria-hidden="true"></canvas>
+    <div class="soundRow">
+      <span class="sLabel" id="gainLabel">音量增强</span>
+      <input type="range" id="gain" min="0" max="100" step="1" value="0" aria-labelledby="gainLabel">
+      <span id="gainVal">1.0x</span>
+    </div>
+    <label class="switchRow">
+      <span class="sLabel">自动增益 <span class="sHint">小声自动放大，环境声也会被拉大</span></span>
+      <input type="checkbox" id="agc">
+      <span class="switch" aria-hidden="true"></span>
+    </label>
+    <p id="agcNote" role="status"></p>
   </div>
 
   <div class="stats">
@@ -322,12 +372,78 @@ const $ = id => document.getElementById(id);
 const micBtn = $('micBtn'), btnLabel = $('btnLabel'), pill = $('pill'), stateEl = $('state'), durEl = $('dur');
 const errBox = $('err'), errText = $('errText');
 const canvas = $('viz'), cx = canvas.getContext('2d');
-let ws = null, ctx = null, stream = null, node = null, wakeLock = null;
+let ws = null, ctx = null, stream = null, node = null, srcNode = null, gainNode = null, limiter = null, wakeLock = null;
 let sentBytes = 0, running = false, startTs = 0;
 let levels = new Array(64).fill(0), curLevel = 0, rafId = 0;
 
 $('caLink').href = 'http://' + location.hostname + ':8080/ca.crt';
 $('errClose').onclick = () => { errBox.style.display = 'none'; };
+
+const GAIN_KEY = 'phonemic_gain', AGC_KEY = 'phonemic_agc';
+function loadGainExp() {
+  try {
+    const v = parseFloat(localStorage.getItem(GAIN_KEY));
+    return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
+  } catch (e) { return 0; }
+}
+let gainX = Math.pow(10, loadGainExp());
+let agcOn = false;
+try { agcOn = localStorage.getItem(AGC_KEY) === '1'; } catch (e) {}
+
+const gainSlider = $('gain');
+function fmtGain(x) { return (x < 9.95 ? x.toFixed(1) : '10') + 'x'; }
+function applyGain() {
+  $('gainVal').textContent = fmtGain(gainX);
+  const pct = Math.round(Math.log10(gainX) * 100);
+  gainSlider.value = pct;
+  gainSlider.style.setProperty('--fill', pct + '%');
+  gainSlider.setAttribute('aria-valuetext', fmtGain(gainX));
+  if (gainNode && ctx) gainNode.gain.setTargetAtTime(gainX, ctx.currentTime, 0.03);
+}
+gainSlider.addEventListener('input', () => {
+  gainX = Math.pow(10, gainSlider.value / 100);
+  try { localStorage.setItem(GAIN_KEY, String(gainSlider.value / 100)); } catch (e) {}
+  applyGain();
+});
+
+const agcBox = $('agc');
+agcBox.checked = agcOn;
+const supportsAgc = !!(navigator.mediaDevices && navigator.mediaDevices.getSupportedConstraints
+  && navigator.mediaDevices.getSupportedConstraints().autoGainControl);
+function setAgcNote(msg) { $('agcNote').textContent = msg; $('agcNote').style.display = msg ? 'block' : 'none'; }
+if (!supportsAgc) {
+  agcBox.disabled = true;
+  setAgcNote('此浏览器不支持自动增益，可用上方音量增强');
+}
+agcBox.addEventListener('change', async () => {
+  agcOn = agcBox.checked;
+  try { localStorage.setItem(AGC_KEY, agcOn ? '1' : '0'); } catch (e) {}
+  if (!stream) return;
+  let ok = false;
+  try { await stream.getAudioTracks()[0].applyConstraints({ autoGainControl: agcOn }); ok = true; } catch (e) {}
+  if (!ok) {
+    try {
+      const fresh = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
+      stream.getTracks().forEach(t => t.stop());
+      stream = fresh;
+      if (srcNode) srcNode.disconnect();
+      srcNode = ctx.createMediaStreamSource(stream);
+      srcNode.connect(gainNode);
+      ok = true;
+    } catch (e) {}
+  }
+  if (!ok) {
+    agcOn = !agcOn;
+    agcBox.checked = agcOn;
+    try { localStorage.setItem(AGC_KEY, agcOn ? '1' : '0'); } catch (e) {}
+    setAgcNote('自动增益切换失败，请停止后重新开始');
+    return;
+  }
+  const actual = stream.getAudioTracks()[0].getSettings().autoGainControl;
+  if (actual !== undefined && actual !== agcOn) setAgcNote('系统未接受自动增益设置，实际为' + (actual ? '开' : '关'));
+  else setAgcNote('');
+});
+applyGain();
 
 function showErr(msg) { errText.textContent = msg; errBox.style.display = 'flex'; }
 function clearErr() { errBox.style.display = 'none'; }
@@ -522,6 +638,10 @@ setInterval(() => {
   } else durEl.textContent = '';
 }, 500);
 
+function audioConstraints() {
+  return { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: agcOn };
+}
+
 async function start() {
   clearErr();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -534,9 +654,11 @@ async function start() {
   setPill('connecting', '连接中');
   btnLabel.textContent = '正在请求麦克风权限…';
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
+    const trackSettings = stream.getAudioTracks()[0].getSettings();
+    if (supportsAgc && agcOn && trackSettings.autoGainControl === false) {
+      setAgcNote('系统未接受自动增益设置，可用上方音量增强');
+    }
     ctx = new AudioContext();
     await ctx.audioWorklet.addModule('/worklet.js');
     $('rate').textContent = ctx.sampleRate === 48000 ? '48 kHz' : (ctx.sampleRate / 1000).toFixed(1) + ' → 48 kHz';
@@ -554,7 +676,18 @@ async function start() {
       ws.send(pcm);
       sentBytes += pcm.byteLength;
     };
-    ctx.createMediaStreamSource(stream).connect(node);
+    gainNode = ctx.createGain();
+    gainNode.gain.value = gainX;
+    limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -3;
+    limiter.knee.value = 6;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.1;
+    srcNode = ctx.createMediaStreamSource(stream);
+    srcNode.connect(gainNode);
+    gainNode.connect(limiter);
+    limiter.connect(node);
 
     ws.onclose = ev => {
       if (running) {
@@ -591,6 +724,9 @@ async function start() {
 function stop() {
   running = false;
   if (node) { node.disconnect(); node.port.onmessage = null; node = null; }
+  if (srcNode) { srcNode.disconnect(); srcNode = null; }
+  if (gainNode) { gainNode.disconnect(); gainNode = null; }
+  if (limiter) { limiter.disconnect(); limiter = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   if (ctx) { ctx.close(); ctx = null; }
   if (ws) { const w = ws; ws = null; w.onclose = null; try { w.close(1000); } catch (e) {} }

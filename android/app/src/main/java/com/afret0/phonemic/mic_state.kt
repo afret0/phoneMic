@@ -23,6 +23,10 @@ object MicState {
     val servers = MutableStateFlow<List<Srv>>(emptyList())
     val pcStatus = MutableStateFlow<PcStatus?>(null)
     val selected = MutableStateFlow<Srv?>(null)
+    val gain = MutableStateFlow(1f)
+    val agcOn = MutableStateFlow(false)
+    val agcActive = MutableStateFlow(false)
+    val agcAvailable = MutableStateFlow(true)
 
     fun resetSession() {
         level.value = 0f

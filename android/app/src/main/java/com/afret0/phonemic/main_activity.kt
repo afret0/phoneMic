@@ -36,6 +36,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -189,6 +193,8 @@ fun App() {
                 p.getInt("last_port", 8443), p.getInt("last_http", 8080),
             )
         }
+        MicState.gain.value = loadGain(ctx)
+        MicState.agcOn.value = loadAgc(ctx)
     }
 
     Column(
@@ -267,6 +273,8 @@ fun App() {
 
         Spacer(Modifier.height(16.dp))
         LevelCard()
+        Spacer(Modifier.height(12.dp))
+        SoundCard()
         Spacer(Modifier.height(12.dp))
         if (!active) {
             ServerCard(servers, selected, manualText, { manualText = it }, {
@@ -478,6 +486,59 @@ fun LevelCard() {
                     cornerRadius = CornerRadius(bw * 0.28f, bw * 0.28f),
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun SoundCard() {
+    val ctx = LocalContext.current
+    val gain by MicState.gain.collectAsStateWithLifecycle()
+    val agcOn by MicState.agcOn.collectAsStateWithLifecycle()
+    val agcAvail by MicState.agcAvailable.collectAsStateWithLifecycle()
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("音量增强", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.weight(1f))
+            Text(fmtGain(gain), color = Fg, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Slider(
+            value = sliderFromGain(gain),
+            onValueChange = {
+                MicState.gain.value = gainFromSlider(it)
+                saveGain(ctx, it)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = SliderDefaults.colors(
+                thumbColor = Fg, activeTrackColor = Indigo,
+                inactiveTrackColor = Color(0xFF27273B),
+            ),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("自动增益", color = Fg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("小声自动放大，环境声也会被拉大", color = Muted, fontSize = 11.5.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            Switch(
+                checked = agcOn,
+                onCheckedChange = {
+                    MicState.agcOn.value = it
+                    saveAgc(ctx, it)
+                },
+                enabled = agcAvail,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Fg, checkedTrackColor = Indigo,
+                    uncheckedThumbColor = Muted, uncheckedTrackColor = Color(0xFF27273B),
+                    uncheckedBorderColor = BorderC,
+                ),
+            )
+        }
+        if (!agcAvail) {
+            Spacer(Modifier.height(6.dp))
+            Text("此设备不支持自动增益，可拖动上方滑杆", color = Amber, fontSize = 11.5.sp)
         }
     }
 }

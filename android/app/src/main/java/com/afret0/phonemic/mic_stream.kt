@@ -137,12 +137,13 @@ class MicEngine(private val ctx: Context) {
     private fun openRecord(): AudioRecord {
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufBytes = maxOf(minBuf, FRAME_BYTES * 8)
-        for (src in intArrayOf(1, 6, 9)) {
+        val sources = if (MicState.agcOn.value) intArrayOf(7, 1, 6, 9) else intArrayOf(1, 6, 9)
+        for (src in sources) {
             val r = runCatching {
                 AudioRecord(src, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufBytes)
             }.getOrNull()
             if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
-                Log.i(TAG, "hit, 麦克风已打开, source: $src, rate: ${r.sampleRate}")
+                Log.i(TAG, "hit, 麦克风已打开, source: $src, rate: ${r.sampleRate}, agcOn: ${MicState.agcOn.value}")
                 return r
             }
             r?.release()
@@ -153,6 +154,7 @@ class MicEngine(private val ctx: Context) {
 
     private suspend fun captureLoop(ws: WebSocket, closed: CompletableDeferred<Int>) = withContext(Dispatchers.IO) {
         val record = openRecord()
+        var agc: AgcHandle? = null
         try {
             MicState.deviceRate.value = record.sampleRate
             val resampler = if (record.sampleRate != SAMPLE_RATE) Resampler(record.sampleRate) else null
@@ -161,8 +163,18 @@ class MicEngine(private val ctx: Context) {
             val pending = ByteArray(FRAME_BYTES * 4)
             var pendingN = 0
             var dropped = 0
+            var curGain = MicState.gain.value
+            val limiter = SoftLimiter()
+            val agcHandle = attachAgc(record.audioSessionId, MicState.agcOn.value)
+            agc = agcHandle
+            MicState.agcAvailable.value = agcHandle.active
+            var agcApplied = false
+            var agcSwitchAt = 0L
 
-            fun emitSample(s: Short) {
+            fun emitSample(raw: Short) {
+                val target = MicState.gain.value
+                curGain = if (curGain == target) target else curGain + (target - curGain) * 0.005f
+                val s = applyGainSoft(raw, curGain, limiter)
                 pending[pendingN] = (s.toInt() and 0xFF).toByte()
                 pending[pendingN + 1] = ((s.toInt() shr 8) and 0xFF).toByte()
                 pendingN += 2
@@ -187,6 +199,23 @@ class MicEngine(private val ctx: Context) {
             }
 
             while (coroutineContext.isActive && !closed.isCompleted) {
+                if (agcHandle.active && MicState.agcOn.value != agcApplied) {
+                    val on = MicState.agcOn.value
+                    Log.i(TAG, "hit, 自动增益开关切换, old: $agcApplied, new: $on")
+                    if (on) {
+                        agcApplied = agcHandle.setOn(true)
+                        agcSwitchAt = 0L
+                        if (!agcApplied) MicState.agcOn.value = false
+                    } else {
+                        agcHandle.setOn(false)
+                        agcSwitchAt = System.currentTimeMillis() + 300
+                        agcApplied = false
+                    }
+                }
+                if (agcSwitchAt != 0L && System.currentTimeMillis() >= agcSwitchAt) {
+                    Log.i(TAG, "hit, 自动增益已关, 重开采集回到主麦路径")
+                    break
+                }
                 val n = record.read(chunk, 0, FRAME_SAMPLES)
                 if (n <= 0) continue
                 if (resampler == null) {
@@ -197,6 +226,8 @@ class MicEngine(private val ctx: Context) {
             }
             record.stop()
         } finally {
+            agc?.release()
+            MicState.agcAvailable.value = true
             record.release()
         }
     }
