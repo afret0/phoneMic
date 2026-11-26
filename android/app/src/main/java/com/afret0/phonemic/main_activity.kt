@@ -314,8 +314,6 @@ fun App() {
         Spacer(Modifier.height(16.dp))
         LevelCard()
         Spacer(Modifier.height(12.dp))
-        SoundCard()
-        Spacer(Modifier.height(12.dp))
         if (!active) {
             ServerCard(servers, selected, manualText, { manualText = it }, {
                 MicState.selected.value = it
@@ -343,6 +341,8 @@ fun App() {
             ConnectedPcCard(selected)
             Spacer(Modifier.height(12.dp))
         }
+        SoundCard()
+        Spacer(Modifier.height(12.dp))
         Tiles()
         Spacer(Modifier.height(16.dp))
         Text(
