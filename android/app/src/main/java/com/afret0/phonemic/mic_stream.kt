@@ -3,7 +3,6 @@ package com.afret0.phonemic
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -55,13 +54,6 @@ class Resampler(srcRate: Int) {
     }
 }
 
-private fun deviceName(): String {
-    val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
-    val model = Build.MODEL?.trim().orEmpty()
-    val name = if (manufacturer.isNotEmpty() && !model.startsWith(manufacturer, ignoreCase = true)) "$manufacturer $model" else model
-    return name.ifEmpty { "Android" }
-}
-
 class MicEngine(private val ctx: Context) {
 
     suspend fun run(srv: Srv) = coroutineScope {
@@ -106,7 +98,7 @@ class MicEngine(private val ctx: Context) {
     private suspend fun streamOnce(client: OkHttpClient, srv: Srv): Int {
         val opened = CompletableDeferred<Unit>()
         val closed = CompletableDeferred<Int>()
-        val name = deviceName()
+        val name = localDeviceName(ctx)
         val wsUrl = "wss://${srv.host}:${srv.port}/ws?name=" + URLEncoder.encode(name, "UTF-8")
         val ws = client.newWebSocket(
             Request.Builder().url(wsUrl).build(),

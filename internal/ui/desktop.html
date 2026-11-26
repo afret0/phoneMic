@@ -160,7 +160,13 @@ footer .btn { margin-left: auto; }
     </div>
   </header>
 
-  <div class="pill" id="svcPill"><span class="dot"></span><span id="svcText">服务启动中</span></div>
+  <div class="row">
+    <div class="pill" id="svcPill"><span class="dot"></span><span id="svcText">服务启动中</span></div>
+    <div class="pill" id="pcPill" title="本机电脑名" style="display:none">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+      <span id="pcName"></span>
+    </div>
+  </div>
 
   <div class="card">
     <div class="cardHead">
@@ -234,7 +240,19 @@ footer .btn { margin-left: auto; }
     <div class="steps">
       <div>1. 手机首次使用先安装证书:<a id="certLink" href="#" title="点击复制链接"></a></div>
       <div>2. 手机与电脑连同一 Wi-Fi,扫码或输入上方地址打开页面</div>
-      <div>3. 手机点麦克风开始推流;会议 App 麦克风选 <b id="micName"></b></div>
+      <div>3. 手机点麦克风开始推流;会议 App 的输入/输出按下方「会议 App 设备选择」设置</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+      <span class="label">会议 App 设备选择</span>
+    </div>
+    <div class="steps">
+      <div>麦克风(输入)选 <b id="guideMic"></b> — 手机的声音从这里进入会议</div>
+      <div>扬声器(输出)选<b>真实耳机或音箱</b> — 选虚拟声卡会听不到对方声音</div>
+      <div>上方「声音写入设备」保持<b>自动(虚拟声卡)</b> — 选物理扬声器会外放啸叫</div>
     </div>
   </div>
 
@@ -427,7 +445,11 @@ footer .btn { margin-left: auto; }
       const s = await window.GetState();
       virtualDefault = VIRTUAL_MATCH[s.os] || '';
       $('ver').textContent = 'v' + s.version;
-      $('micName').textContent = s.micName;
+      $('guideMic').textContent = s.micName;
+      const st0 = s.status || {};
+      $('pcName').textContent = st0.computer || '';
+      $('pcPill').style.display = st0.computer ? '' : 'none';
+      $('pcPill').title = '本机电脑名: ' + (st0.computer || '');
       $('closeNote').textContent = s.os === 'windows' ? '关闭窗口会收进托盘继续推流' : '关闭窗口即退出程序';
       renderDriver(s.driver, s.micName);
       renderStream(s.status || {});

@@ -589,6 +589,7 @@ fun Tile(title: String, value: String, modifier: Modifier = Modifier, onClick: (
 @Composable
 fun Tiles() {
     val ctx = LocalContext.current
+    val myName = remember { localDeviceName(ctx) }
     val pc by MicState.pcStatus.collectAsStateWithLifecycle()
     val selected by MicState.selected.collectAsStateWithLifecycle()
     val sent by MicState.sentBytes.collectAsStateWithLifecycle()
@@ -622,6 +623,7 @@ fun Tiles() {
         else -> String.format("%.1f → 48 kHz", rate / 1000.0)
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Tile("本机", myName, Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Tile(
                 "声音写入设备(虚拟声卡)",

@@ -79,6 +79,12 @@ func main() {
 		slog.Error("fail, 证书初始化失败", "err", err)
 		os.Exit(1)
 	}
+	dataDir, err := os.UserConfigDir()
+	if err != nil {
+		dataDir = filepath.Dir(*certsDir)
+		slog.Error("fail, 取用户配置目录失败, 数据目录改用证书目录上级", "dataDir", dataDir, "err", err)
+	}
+	server.InitComputerName(filepath.Join(dataDir, "phoneMic"))
 
 	type playerResult struct {
 		p   *audio.Player
