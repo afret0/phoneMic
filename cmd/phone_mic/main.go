@@ -24,8 +24,8 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(openLogSink(), os.Stdout), nil)))
 
-	device := flag.String("device", driver.DefaultMatch, "输出设备名匹配子串(不区分大小写)")
-	listDevices := flag.Bool("list-devices", false, "列出所有输出设备后退出")
+	device := flag.String("device", driver.DefaultMatch, "声音写入设备名匹配子串(不区分大小写)")
+	listDevices := flag.Bool("list-devices", false, "列出所有声音写入设备后退出")
 	installDriver := flag.Bool("install-driver", false, "安装虚拟声卡(mac: BlackHole / win: VB-Cable), 需管理员授权")
 	uninstallDriver := flag.Bool("uninstall-driver", false, "卸载虚拟声卡, 需管理员授权")
 	httpsAddr := flag.String("https-addr", ":8443", "HTTPS 监听地址(手机页面/推流)")
@@ -175,7 +175,7 @@ func printBanner(httpsAddr, httpAddr, deviceName string) {
 			break
 		}
 	}
-	fmt.Printf("  电脑输出设备: %s\n", deviceName)
+	fmt.Printf("  声音写入设备: %s\n", deviceName)
 	fmt.Printf("  会议/聊天 App 的麦克风请选: %s\n", micName)
 	fmt.Println("========================================================")
 }

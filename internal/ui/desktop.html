@@ -189,7 +189,7 @@ footer .btn { margin-left: auto; }
   <div class="card">
     <div class="cardHead">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
-      <span class="label">电脑输出设备</span>
+      <span class="label">声音写入设备(虚拟声卡)</span>
       <button class="btn mini right" id="btnRefresh">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         刷新
@@ -197,10 +197,10 @@ footer .btn { margin-left: auto; }
     </div>
     <div class="curDev" id="curDev">检测中</div>
     <div class="row">
-      <select id="devSelect" aria-label="选择输出设备"></select>
+      <select id="devSelect" aria-label="选择声音写入设备"></select>
       <button class="btn" id="btnSwitch">切换</button>
     </div>
-    <div class="banner" id="spkWarn">正在输出到物理扬声器:手机声音会从音响外放,可能被手机再次拾取产生啸叫。建议切换到虚拟声卡。</div>
+    <div class="banner" id="spkWarn">正在写入物理扬声器:手机声音会从音响外放,可能被手机再次拾取产生啸叫。建议切换到虚拟声卡。</div>
   </div>
 
   <div class="card">
@@ -301,7 +301,7 @@ footer .btn { margin-left: auto; }
       if (selectName !== undefined) sel.value = selectName;
       devicesLoaded = true;
     } catch (e) {
-      toast('枚举输出设备失败: ' + e, true);
+      toast('枚举声音写入设备失败: ' + e, true);
     }
   }
 
@@ -366,10 +366,10 @@ footer .btn { margin-left: auto; }
     const el = $('curDev');
     if (dev.current) {
       el.innerHTML = '';
-      el.textContent = '当前输出: ' + dev.current;
+      el.textContent = '当前写入: ' + dev.current;
       $('spkWarn').className = isVirtual(dev.current) ? 'banner' : 'banner show';
     } else {
-      el.innerHTML = '<span class="none">未连接输出设备(等待驱动安装或手动选择)</span>';
+      el.innerHTML = '<span class="none">未连接声音写入设备(等待驱动安装或手动选择)</span>';
       $('spkWarn').className = 'banner';
     }
     if (devicesLoaded && !busyUI && document.activeElement !== $('devSelect')) {

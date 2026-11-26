@@ -451,7 +451,7 @@ fun LevelCard() {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("输入电平", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text("声音采集电平", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
             Text(dbText, color = Muted, fontSize = 12.5.sp)
         }
@@ -593,7 +593,7 @@ fun Tiles() {
     }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Tile("电脑输出设备", pc?.device ?: "-", Modifier.weight(1f))
+            Tile("声音写入设备(虚拟声卡)", pc?.device ?: "-", Modifier.weight(1f))
             Tile("电脑缓冲", "${pc?.bufferedMs ?: 0} ms", Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
