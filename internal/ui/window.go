@@ -15,11 +15,11 @@ func (a *App) runWindow() {
 		return
 	}
 	w := webview.New(false)
-	defer w.Destroy()
 	a.wvMu.Lock()
 	a.wv = w
 	a.wvMu.Unlock()
 	if a.done.Load() {
+		w.Destroy()
 		return
 	}
 	w.SetTitle("phoneMic · 手机麦克风")
@@ -34,14 +34,17 @@ func (a *App) runWindow() {
 	a.setWindowIcon()
 	slog.Info("done, 桌面窗口已打开")
 	w.Run()
+	a.wvMu.Lock()
+	a.wv = nil
+	w.Destroy()
+	a.wvMu.Unlock()
 	slog.Info("done, 桌面窗口消息循环退出")
 }
 
 func (a *App) terminateWindow() {
 	a.wvMu.Lock()
-	w := a.wv
-	a.wvMu.Unlock()
-	if w != nil {
-		w.Dispatch(w.Terminate)
+	defer a.wvMu.Unlock()
+	if a.wv != nil {
+		a.wv.Dispatch(a.wv.Terminate)
 	}
 }

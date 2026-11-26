@@ -17,6 +17,7 @@
 - BlackHole 的 GitHub release 无 assets，官方 pkg 只能从 brew cask API json 拿 URL+sha256。
 - 集成浏览器/Chrome 不信任自签 CA（ERR_CERT_AUTHORITY_INVALID，无"继续"入口）。**无声全链路 UI 验证法**：临时把 player.go 两处 `malgo.InitContext(nil,…)` 改成 `[]malgo.Backend{malgo.BackendNull}` → 构建 /tmp 测试二进制（设备名 "NULL Playback Device"）→ **立刻还原源码再构建正式二进制**；用 playwright-core 驱动系统 Chrome（`ignoreHTTPSErrors: true` + `--use-fake-device-for-media-stream --use-fake-ui-for-media-stream --mute-audio`）点 `#micBtn`、断言 `/status` 的 sessionFrames/writtenBytes/bufferedMs。
 - 手机页面（web/static/index.html）元素 id：`micBtn/btnLabel/pill/state/dur/viz/db/device/buffered/sent/rate/setup`（details 手风琴）。
+- **mac 关窗崩溃竞态（2026-11-26 实测修复）**：mac 的 `hookClose()` 是 no-op，用户关窗 → `w.Run()` 返回 → webview 被 Destroy；若 `a.wv` 不清空，退出 goroutine 的 `Quit→terminateWindow` 会对悬空指针 `Dispatch` → SIGSEGV（exit 2）。修复形态（window.go）：`Run()` 返回后**持 wvMu 清空 a.wv 再 Destroy**，`terminateWindow` 持同一把锁做 nil 判断+Dispatch；Destroy 与 Dispatch 互斥即无竞态。验证法：/tmp 测试二进制 `--device __nomatch__` 起窗，`osascript` System Events `click button 1 of window 1`（按 unix id 定位进程，需辅助功能权限）测关窗路径、`kill -TERM` 测 Quit 路径，两者都应 exit 0 且日志以「done, 程序已退出」收尾。
 
 ## 手机页 UI 设计系统（ui-ux-pro-max 推荐 + 用户确认重做）
 
