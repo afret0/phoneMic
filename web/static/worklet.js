@@ -5,9 +5,17 @@ class PCMProcessor extends AudioWorkletProcessor {
     this.out = new Int16Array(this.frameSamples);
     this.outPos = 0;
     this.sumSq = 0;
-    this.ratio = sampleRate / 48000;
+    this.baseRatio = sampleRate / 48000;
+    this.trimPpm = 0;
+    this.ratio = this.baseRatio;
     this.pos = 0;
     this.prev = 0;
+    this.port.onmessage = (e) => {
+      if (typeof e.data.trimPpm === 'number') {
+        this.trimPpm = e.data.trimPpm;
+        this.ratio = this.baseRatio / (1 + this.trimPpm / 1e6);
+      }
+    };
   }
 
   process(inputs) {
@@ -16,6 +24,8 @@ class PCMProcessor extends AudioWorkletProcessor {
 
     if (this.ratio === 1) {
       for (let i = 0; i < ch.length; i++) this.push(ch[i]);
+      this.prev = ch[ch.length - 1];
+      this.pos = 0;
       return true;
     }
 

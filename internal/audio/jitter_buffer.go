@@ -2,7 +2,10 @@ package audio
 
 import (
 	"encoding/binary"
+	"log/slog"
+	"math"
 	"sync"
+	"time"
 )
 
 const (
@@ -16,24 +19,44 @@ const (
 	maxBufferByte     = SampleRate * BytesPerSample * MaxBufferMs / 1000
 	reprimeBufferByte = SampleRate * BytesPerSample * ReprimeBufferMs / 1000
 	fadeSamples       = SampleRate * FadeMs / 1000
+
+	driftHighByte      = SampleRate * BytesPerSample * 150 / 1000
+	driftLowByte       = SampleRate * BytesPerSample * 60 / 1000
+	driftPeriodSample  = SampleRate * 10 / 1000
+	driftWindowSample  = SampleRate * 15 / 1000
+	driftFadeSample    = SampleRate * 5 / 1000
+	driftPeriodByte    = driftPeriodSample * BytesPerSample
+	driftWindowByte    = driftWindowSample * BytesPerSample
+	driftFadeByte      = driftFadeSample * BytesPerSample
+	driftMinGap        = 10 * time.Second
+	driftForceWait     = 60 * time.Second
+	driftSilenceRms    = 0.0031623
+	driftSilenceEnergy = driftSilenceRms * driftSilenceRms * driftWindowSample
 )
 
 type JitterBuffer struct {
-	mu          sync.Mutex
-	buf         []byte
-	dropOldest  uint64
-	underrun    uint64
-	written     uint64
-	primed      bool
-	reprime     bool
-	lastSample  int16
-	fadeInLeft  int
-	fadeOutLeft int
-	lastDropLog uint64
+	mu           sync.Mutex
+	buf          []byte
+	dropOldest   uint64
+	underrun     uint64
+	written      uint64
+	primed       bool
+	reprime      bool
+	lastSample   int16
+	fadeInLeft   int
+	fadeOutLeft  int
+	lastDropLog  uint64
+	driftTrims   uint64
+	driftInserts uint64
+	driftForced  uint64
+	lastAdjust   time.Time
+	needSince    time.Time
+	needDir      int
+	nowFn        func() time.Time
 }
 
 func NewJitterBuffer() *JitterBuffer {
-	return &JitterBuffer{}
+	return &JitterBuffer{nowFn: time.Now}
 }
 
 func (j *JitterBuffer) Write(pcm []byte) (droppedNow int) {
@@ -49,8 +72,10 @@ func (j *JitterBuffer) Write(pcm []byte) (droppedNow int) {
 		j.buf = append(j.buf[:0], j.buf[overflow:]...)
 		j.dropOldest += uint64(overflow)
 		droppedNow = overflow
+		return droppedNow
 	}
-	return droppedNow
+	j.adaptDrift(j.nowFn())
+	return 0
 }
 
 func (j *JitterBuffer) Read(out []byte) (silenceFilled bool) {
@@ -125,10 +150,153 @@ func (j *JitterBuffer) Reset() {
 	j.lastSample = 0
 	j.fadeInLeft = 0
 	j.fadeOutLeft = 0
+	j.lastAdjust = time.Time{}
+	j.needSince = time.Time{}
+	j.needDir = 0
+}
+
+func (j *JitterBuffer) adaptDrift(now time.Time) {
+	dir := 0
+	if len(j.buf) > driftHighByte {
+		dir = 1
+	} else if j.primed && len(j.buf) < driftLowByte {
+		dir = -1
+	}
+	if dir == 0 {
+		j.needSince = time.Time{}
+		j.needDir = 0
+		return
+	}
+	if j.needDir != dir {
+		j.needDir = dir
+		j.needSince = now
+	}
+	if !j.lastAdjust.IsZero() && now.Sub(j.lastAdjust) < driftMinGap {
+		return
+	}
+	hi := len(j.buf) - driftWindowByte
+	if dir < 0 {
+		hi -= driftPeriodByte
+	}
+	mode, at := 0, 0
+	if hi >= 0 {
+		if off := j.findSilentWindow(hi); off >= 0 {
+			mode, at = 1, off
+		} else if now.Sub(j.needSince) >= driftForceWait {
+			mode, at = 2, j.minEnergyWindow(hi)
+		}
+	}
+	if mode == 0 {
+		return
+	}
+	if dir > 0 {
+		j.spliceDrop(at)
+		j.driftTrims++
+	} else {
+		j.spliceInsert(at)
+		j.driftInserts++
+	}
+	if mode == 2 {
+		j.driftForced++
+	}
+	j.lastAdjust = now
+	j.needSince = time.Time{}
+	j.needDir = 0
+	dirName, modeName := "drop", "silence"
+	if dir < 0 {
+		dirName = "insert"
+	}
+	if mode == 2 {
+		modeName = "forced"
+	}
+	slog.Info("hit, 时钟漂移自适应拼接",
+		"direction", dirName, "mode", modeName,
+		"periodMs", driftPeriodSample*1000/SampleRate,
+		"bufferedMs", len(j.buf)*1000/(SampleRate*BytesPerSample),
+		"driftTrims", j.driftTrims, "driftInserts", j.driftInserts, "driftForced", j.driftForced)
+}
+
+func (j *JitterBuffer) sampleAt(byteOff int) float64 {
+	return float64(int16(binary.LittleEndian.Uint16(j.buf[byteOff:byteOff+BytesPerSample]))) / 32768
+}
+
+func (j *JitterBuffer) windowEnergy(off int) float64 {
+	var sum float64
+	for i := off; i < off+driftWindowByte; i += BytesPerSample {
+		v := j.sampleAt(i)
+		sum += v * v
+	}
+	return sum
+}
+
+func (j *JitterBuffer) findSilentWindow(hi int) int {
+	sum := j.windowEnergy(0)
+	for off := 0; ; off += BytesPerSample {
+		if sum < driftSilenceEnergy {
+			return off
+		}
+		if off >= hi {
+			return -1
+		}
+		a := j.sampleAt(off)
+		b := j.sampleAt(off + driftWindowByte)
+		sum += b*b - a*a
+	}
+}
+
+func (j *JitterBuffer) minEnergyWindow(hi int) int {
+	sum := j.windowEnergy(0)
+	best, bestSum := 0, sum
+	for off := BytesPerSample; off <= hi; off += BytesPerSample {
+		a := j.sampleAt(off - BytesPerSample)
+		b := j.sampleAt(off - BytesPerSample + driftWindowByte)
+		sum += b*b - a*a
+		if sum < bestSum {
+			best, bestSum = off, sum
+		}
+	}
+	return best
+}
+
+func (j *JitterBuffer) spliceDrop(at int) {
+	for i := 0; i < driftFadeByte; i += BytesPerSample {
+		t := (float64(i/BytesPerSample) + 1) / (driftFadeSample + 1)
+		a := j.sampleAt(at + i)
+		b := j.sampleAt(at + driftPeriodByte + i)
+		v := int16(math.Round((a*(1-t) + b*t) * 32768))
+		binary.LittleEndian.PutUint16(j.buf[at+i:at+i+BytesPerSample], uint16(v))
+	}
+	copy(j.buf[at+driftFadeByte:], j.buf[at+driftPeriodByte+driftFadeByte:])
+	j.buf = j.buf[:len(j.buf)-driftPeriodByte]
+}
+
+func (j *JitterBuffer) spliceInsert(off int) {
+	s := off + driftFadeByte
+	n := len(j.buf)
+	seg := make([]byte, driftPeriodByte+2*driftFadeByte)
+	for i := 0; i < driftFadeByte; i += BytesPerSample {
+		t := (float64(i/BytesPerSample) + 1) / (driftFadeSample + 1)
+		a := j.sampleAt(s - driftFadeByte + i)
+		b := j.sampleAt(s + i)
+		c := j.sampleAt(s + driftPeriodByte + driftFadeByte + i)
+		binary.LittleEndian.PutUint16(seg[i:i+BytesPerSample], uint16(int16(math.Round((a*(1-t)+b*t)*32768))))
+		binary.LittleEndian.PutUint16(seg[driftFadeByte+driftPeriodByte+i:driftFadeByte+driftPeriodByte+i+BytesPerSample],
+			uint16(int16(math.Round((c*(1-t)+b*t)*32768))))
+	}
+	copy(seg[driftFadeByte:driftFadeByte+driftPeriodByte], j.buf[s+driftFadeByte:s+driftFadeByte+driftPeriodByte])
+	j.buf = append(j.buf, make([]byte, driftPeriodByte)...)
+	copy(j.buf[s+driftFadeByte+driftPeriodByte:], j.buf[s+driftFadeByte:n])
+	copy(j.buf[s-driftFadeByte:], seg)
 }
 
 func (j *JitterBuffer) Stats() (bufferedMs int, dropOldest, underrun, written uint64) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return len(j.buf) * 1000 / (SampleRate * BytesPerSample), j.dropOldest, j.underrun, j.written
+}
+
+func (j *JitterBuffer) DriftStats() (trims, inserts, forced uint64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.driftTrims, j.driftInserts, j.driftForced
 }

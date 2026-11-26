@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"math"
 	"testing"
+	"time"
 )
 
 func pcmSeq(startSample uint16, samples int) []byte {
@@ -80,7 +81,7 @@ func TestJitterBufferOverflowDropOldest(t *testing.T) {
 
 func TestJitterBufferOverflowOddRoundedToSample(t *testing.T) {
 	j := NewJitterBuffer()
-	j.Write(make([]byte, maxBufferByte))
+	j.Write(bytes.Repeat([]byte{0x20, 0x4E}, maxSamples()))
 	dropped := j.Write([]byte{1, 2, 3})
 	if dropped != 4 {
 		t.Fatalf("奇数溢出应取偶丢整采样, dropped: %d, want 4", dropped)
@@ -237,5 +238,204 @@ func TestJitterBufferReset(t *testing.T) {
 	bufferedMs, _, _, _ := j.Stats()
 	if bufferedMs != 0 {
 		t.Fatalf("Reset 后 bufferedMs: %d, want 0", bufferedMs)
+	}
+}
+
+func driftClock(j *JitterBuffer) *time.Duration {
+	base := time.Now()
+	offset := new(time.Duration)
+	j.nowFn = func() time.Time { return base.Add(*offset) }
+	return offset
+}
+
+func driftSample(j *JitterBuffer, idx int) int16 {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return int16(binary.LittleEndian.Uint16(j.buf[idx*BytesPerSample:]))
+}
+
+func TestJitterBufferDriftBandBoundary(t *testing.T) {
+	cases := []struct {
+		name      string
+		samples   int
+		wantTrims uint64
+	}{
+		{"150ms整不触发", 7200, 0},
+		{"150ms多1采样触发", 7201, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			j := NewJitterBuffer()
+			driftClock(j)
+			j.Write(make([]byte, c.samples*BytesPerSample))
+			trims, _, _ := j.DriftStats()
+			if trims != c.wantTrims {
+				t.Fatalf("trims: %d, want %d", trims, c.wantTrims)
+			}
+		})
+	}
+}
+
+func TestJitterBufferDriftTrimOnSilence(t *testing.T) {
+	j := NewJitterBuffer()
+	driftClock(j)
+	j.Write(make([]byte, 7600*BytesPerSample))
+	trims, inserts, forced := j.DriftStats()
+	if trims != 1 || inserts != 0 || forced != 0 {
+		t.Fatalf("trims/inserts/forced: %d/%d/%d, want 1/0/0", trims, inserts, forced)
+	}
+	bufferedMs, _, _, _ := j.Stats()
+	if bufferedMs != (7600-driftPeriodSample)*1000/SampleRate {
+		t.Fatalf("静音段丢一个周期后 bufferedMs: %d", bufferedMs)
+	}
+	out := make([]byte, 960)
+	j.Read(out)
+	if !bytes.Equal(out, make([]byte, 960)) {
+		t.Fatalf("静音拼接后输出仍须全零")
+	}
+}
+
+func TestJitterBufferDriftInsertBandBoundary(t *testing.T) {
+	cases := []struct {
+		name        string
+		samples     int
+		wantInserts uint64
+	}{
+		{"60ms整不触发", 2880, 0},
+		{"60ms少1采样触发", 2879, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			j := NewJitterBuffer()
+			driftClock(j)
+			j.mu.Lock()
+			j.primed = true
+			j.mu.Unlock()
+			j.Write(make([]byte, c.samples*BytesPerSample))
+			_, inserts, _ := j.DriftStats()
+			if inserts != c.wantInserts {
+				t.Fatalf("inserts: %d, want %d", inserts, c.wantInserts)
+			}
+		})
+	}
+}
+
+func TestJitterBufferDriftInsertUnprimed(t *testing.T) {
+	j := NewJitterBuffer()
+	driftClock(j)
+	j.Write(make([]byte, 2500*BytesPerSample))
+	_, inserts, _ := j.DriftStats()
+	if inserts != 0 {
+		t.Fatalf("未 primed 不应插入, inserts: %d", inserts)
+	}
+}
+
+func TestJitterBufferDriftTrimCrossfadeForced(t *testing.T) {
+	j := NewJitterBuffer()
+	clock := driftClock(j)
+	j.Write(pcmSeq(0, 8000))
+	if trims, _, _ := j.DriftStats(); trims != 0 {
+		t.Fatalf("非静音且未满强制等待不应丢, trims: %d", trims)
+	}
+	*clock += 61 * time.Second
+	j.Write(pcmSeq(8000, 960))
+	trims, _, forced := j.DriftStats()
+	if trims != 1 || forced != 1 {
+		t.Fatalf("trims/forced: %d/%d, want 1/1", trims, forced)
+	}
+	if got := driftSample(j, 0); got != 2 {
+		t.Fatalf("交叉淡化首采样: %d, want round(480/241)=2", got)
+	}
+	if got := driftSample(j, driftFadeSample); got != 720 {
+		t.Fatalf("淡化区外须接原序号 720, got %d", got)
+	}
+	bufferedMs, _, _, _ := j.Stats()
+	if bufferedMs != (8960-driftPeriodSample)*1000/SampleRate {
+		t.Fatalf("强制丢一个周期后 bufferedMs: %d", bufferedMs)
+	}
+}
+
+func TestJitterBufferDriftInsertCrossfadeForced(t *testing.T) {
+	j := NewJitterBuffer()
+	clock := driftClock(j)
+	j.mu.Lock()
+	j.primed = true
+	j.mu.Unlock()
+	j.Write(pcmSeq(0, 2700))
+	if _, inserts, _ := j.DriftStats(); inserts != 0 {
+		t.Fatalf("非静音且未满强制等待不应插, inserts: %d", inserts)
+	}
+	*clock += 61 * time.Second
+	j.Write(pcmSeq(2700, 100))
+	_, inserts, forced := j.DriftStats()
+	if inserts != 1 || forced != 1 {
+		t.Fatalf("inserts/forced: %d/%d, want 1/1", inserts, forced)
+	}
+	if got := driftSample(j, driftFadeSample); got != 480 {
+		t.Fatalf("重复段起点须为原序号 480, got %d", got)
+	}
+	if got := driftSample(j, driftFadeSample+driftPeriodSample); got != 957 {
+		t.Fatalf("尾淡化首采样: %d, want round(960*240/241+240/241)=957", got)
+	}
+	if got := driftSample(j, 2*driftFadeSample+driftPeriodSample); got != 480 {
+		t.Fatalf("尾淡化后须接原序号 480, got %d", got)
+	}
+	j.mu.Lock()
+	n := len(j.buf) / BytesPerSample
+	j.mu.Unlock()
+	if n != 2800+driftPeriodSample {
+		t.Fatalf("插入后采样数: %d, want %d", n, 2800+driftPeriodSample)
+	}
+}
+
+func TestJitterBufferDriftMinGap(t *testing.T) {
+	j := NewJitterBuffer()
+	clock := driftClock(j)
+	j.Write(make([]byte, 7600*BytesPerSample))
+	if trims, _, _ := j.DriftStats(); trims != 1 {
+		t.Fatalf("首次静音丢应发生, trims: %d", trims)
+	}
+	*clock += 9 * time.Second
+	j.Write(make([]byte, 960*BytesPerSample))
+	if trims, _, _ := j.DriftStats(); trims != 1 {
+		t.Fatalf("间隔不足 10s 不应再丢, trims: %d", trims)
+	}
+	*clock += 2 * time.Second
+	j.Write(make([]byte, 960*BytesPerSample))
+	if trims, _, _ := j.DriftStats(); trims != 2 {
+		t.Fatalf("间隔满 10s 应再丢, trims: %d", trims)
+	}
+}
+
+func TestJitterBufferDriftNeedDirectionReset(t *testing.T) {
+	j := NewJitterBuffer()
+	clock := driftClock(j)
+	j.mu.Lock()
+	j.primed = true
+	j.mu.Unlock()
+	j.Write(bytes.Repeat([]byte{0x20, 0x4E}, 2500))
+	*clock += 30 * time.Second
+	j.Write(bytes.Repeat([]byte{0x20, 0x4E}, 6000))
+	*clock += 31 * time.Second
+	j.Write(bytes.Repeat([]byte{0x20, 0x4E}, 1500))
+	if trims, inserts, forced := j.DriftStats(); trims != 0 || inserts != 0 || forced != 0 {
+		t.Fatalf("方向切换后强制等待须重新计时, trims/inserts/forced: %d/%d/%d", trims, inserts, forced)
+	}
+	*clock += 30 * time.Second
+	j.Write(bytes.Repeat([]byte{0x20, 0x4E}, 960))
+	if trims, _, forced := j.DriftStats(); trims != 1 || forced != 1 {
+		t.Fatalf("重新计时满 60s 应强制丢, trims/forced: %d/%d", trims, forced)
+	}
+}
+
+func TestJitterBufferDriftResetClearsPending(t *testing.T) {
+	j := NewJitterBuffer()
+	clock := driftClock(j)
+	j.Write(pcmSeq(0, 8000))
+	j.Reset()
+	*clock += 61 * time.Second
+	j.Write(pcmSeq(0, 8000))
+	if trims, _, forced := j.DriftStats(); trims != 0 || forced != 0 {
+		t.Fatalf("Reset 后强制等待须从零计时, trims/forced: %d/%d", trims, forced)
 	}
 }

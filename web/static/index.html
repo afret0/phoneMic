@@ -581,6 +581,30 @@ devTile.onclick = () => {
 };
 $('devRefresh').onclick = () => loadDevList();
 
+let driftEma = null;
+let driftPpm = 0;
+
+function resetDriftTrim() {
+  driftEma = null;
+  if (driftPpm !== 0) {
+    driftPpm = 0;
+    if (node) node.port.postMessage({ trimPpm: 0 });
+  }
+}
+
+function updateDriftTrim(bufferedMs) {
+  if (typeof bufferedMs !== 'number') { resetDriftTrim(); return; }
+  driftEma = driftEma === null ? bufferedMs : driftEma + 0.3 * (bufferedMs - driftEma);
+  const err = driftEma - 100;
+  let ppm = 0;
+  if (Math.abs(err) > 20) ppm = Math.max(-500, Math.min(500, Math.round(err * 10)));
+  if (ppm !== driftPpm) {
+    console.info('hit, 时钟漂移微调, bufferedMs: ' + bufferedMs + ', ema: ' + driftEma.toFixed(1) + ', trimPpm: ' + driftPpm + ' -> ' + ppm);
+    driftPpm = ppm;
+    if (node) node.port.postMessage({ trimPpm: ppm });
+  }
+}
+
 async function pollStatus() {
   try {
     const r = await fetch('/status');
@@ -592,6 +616,8 @@ async function pollStatus() {
     pc.textContent = s.computer ? s.computer + ' · ' + location.hostname : location.hostname;
     pc.title = pc.textContent;
     $('buffered').textContent = s.bufferedMs + ' ms';
+    if (!s.streaming || !running || !node) resetDriftTrim();
+    else updateDriftTrim(s.bufferedMs);
     if (s.version) $('ver').textContent = 'v' + s.version;
   } catch (e) {}
 }
@@ -753,6 +779,7 @@ function bindLive(w) {
     enterReconnect();
   };
   attempt = 0;
+  resetDriftTrim();
   lastDrainTs = Date.now();
   if (!startTs) startTs = Date.now();
   clearErr();
@@ -807,6 +834,7 @@ async function reconnect() {
 
 function stop() {
   running = false;
+  resetDriftTrim();
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = 0; }
   attempt = 0;
   if (node) { node.disconnect(); node.port.onmessage = null; node = null; }

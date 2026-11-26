@@ -33,31 +33,69 @@ private const val FRAME_BYTES = FRAME_SAMPLES * 2
 private const val WS_QUEUE_DROP = 256 * 1024
 
 class Resampler(srcRate: Int) {
-    private val stepUnits = srcRate.toLong()
+    private val baseUnits = srcRate.toLong() * FINE
+    private val unitRate = SAMPLE_RATE.toLong() * FINE
+    private var stepUnits = baseUnits
+    private var trimPpm = 0
     private var posUnits = 0L
     private var prev: Short = 0
 
+    fun setTrim(ppm: Int) {
+        val p = ppm.coerceIn(-500, 500)
+        if (p == trimPpm) return
+        trimPpm = p
+        stepUnits = baseUnits * (1_000_000L + p) / 1_000_000L
+    }
+
     fun process(input: ShortArray, n: Int, emit: (Short) -> Unit) {
         if (n <= 0) return
-        val rate = SAMPLE_RATE.toLong()
-        val limit = (n - 1).toLong() * rate
+        val limit = (n - 1).toLong() * unitRate
         while (posUnits < limit) {
-            val i = posUnits.floorDiv(rate).toInt()
-            val frac = Math.floorMod(posUnits, rate).toDouble() / SAMPLE_RATE
+            val i = posUnits.floorDiv(unitRate).toInt()
+            val frac = Math.floorMod(posUnits, unitRate).toDouble() / unitRate
             val a = if (i < 0) prev else input[i]
             val b = input[i + 1]
             emit((a + (b - a) * frac).roundToInt().coerceIn(-32768, 32767).toShort())
             posUnits += stepUnits
         }
         prev = input[n - 1]
-        posUnits -= n.toLong() * rate
+        posUnits -= n.toLong() * unitRate
+    }
+
+    companion object {
+        private const val FINE = 1_000_000L
+    }
+}
+
+class DriftTrim {
+    var ema: Double? = null
+        private set
+    var ppm: Int = 0
+        private set
+
+    fun reset() {
+        ema = null
+        ppm = 0
+    }
+
+    fun update(bufferedMs: Int): Int {
+        val prev = ema
+        val e = if (prev == null) bufferedMs.toDouble() else prev + 0.3 * (bufferedMs - prev)
+        ema = e
+        val err = e - 100
+        ppm = if (Math.abs(err) > 20) Math.round(err * 10).toInt().coerceIn(-500, 500) else 0
+        return ppm
     }
 }
 
 class MicEngine(private val ctx: Context) {
+    private val drift = DriftTrim()
+    @Volatile private var trimPpm = 0
 
     suspend fun run(srv: Srv) = coroutineScope {
         MicState.resetSession()
+        drift.reset()
+        trimPpm = 0
         Log.i(TAG, "recv, 推流会话开始, host: ${srv.host}, port: ${srv.port}")
         val pollJob = launch { pollStatus(srv) }
         var attempt = 0
@@ -157,7 +195,7 @@ class MicEngine(private val ctx: Context) {
         var agc: AgcHandle? = null
         try {
             MicState.deviceRate.value = record.sampleRate
-            val resampler = if (record.sampleRate != SAMPLE_RATE) Resampler(record.sampleRate) else null
+            val resampler = Resampler(record.sampleRate)
             record.startRecording()
             val chunk = ShortArray(FRAME_SAMPLES)
             val pending = ByteArray(FRAME_BYTES * 4)
@@ -218,11 +256,8 @@ class MicEngine(private val ctx: Context) {
                 }
                 val n = record.read(chunk, 0, FRAME_SAMPLES)
                 if (n <= 0) continue
-                if (resampler == null) {
-                    for (i in 0 until n) emitSample(chunk[i])
-                } else {
-                    resampler.process(chunk, n) { emitSample(it) }
-                }
+                resampler.setTrim(trimPpm)
+                resampler.process(chunk, n) { emitSample(it) }
             }
             record.stop()
         } finally {
@@ -252,6 +287,17 @@ class MicEngine(private val ctx: Context) {
                             streaming = j.optBoolean("streaming", false),
                             sessionBytes = j.optLong("sessionBytes", 0),
                         )
+                        if (j.optBoolean("streaming", false) && j.has("bufferedMs")) {
+                            val bufferedMs = j.optInt("bufferedMs", 0)
+                            val old = drift.ppm
+                            val next = drift.update(bufferedMs)
+                            if (next != old) Log.i(TAG, "hit, 时钟漂移微调, bufferedMs: $bufferedMs, ema: ${drift.ema}, trimPpm: $old -> $next")
+                            trimPpm = next
+                        } else {
+                            if (trimPpm != 0) Log.i(TAG, "hit, 推流停止重置微调, trimPpm: $trimPpm -> 0")
+                            drift.reset()
+                            trimPpm = 0
+                        }
                     }
                 }
             }

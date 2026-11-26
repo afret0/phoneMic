@@ -265,6 +265,10 @@ func (s *Server) Status() map[string]any {
 		status["writtenBytes"] = written
 		status["silentCallbacks"] = silentCb
 		status["totalCallbacks"] = totalCb
+		driftTrims, driftInserts, driftForced := p.JitterBuffer().DriftStats()
+		status["driftTrims"] = driftTrims
+		status["driftInserts"] = driftInserts
+		status["driftForced"] = driftForced
 	}
 	if cur != nil {
 		status["sessionBytes"] = cur.bytes.Load()
@@ -400,10 +404,12 @@ func (s *Server) statsLoop(ctx context.Context) {
 			if p := s.currentPlayer(); p != nil {
 				bufferedMs, dropTotal, underrun, _ := p.JitterBuffer().Stats()
 				silentCb, totalCb := p.CallbackStats()
+				driftTrims, driftInserts, driftForced := p.JitterBuffer().DriftStats()
 				fields = append(fields,
 					"bufferedMs", bufferedMs, "bufferedTargetMs", audio.TargetBufferMs,
 					"dropTotalBytes", dropTotal, "underrunBytes", underrun,
-					"silentCallbacks", silentCb, "totalCallbacks", totalCb)
+					"silentCallbacks", silentCb, "totalCallbacks", totalCb,
+					"driftTrims", driftTrims, "driftInserts", driftInserts, "driftForced", driftForced)
 			}
 			slog.Info("hit, 推流中", fields...)
 		}
