@@ -17,6 +17,11 @@ func (a *App) runTray() {
 		systray.SetTooltip("phoneMic · 手机就是你的电脑麦克风")
 		open := systray.AddMenuItem("打开面板", "显示 phoneMic 窗口")
 		open.Click(func() { a.Show() })
+		checkUpd := systray.AddMenuItem("检查更新", "从 GitHub Release 检查新版本")
+		checkUpd.Click(func() {
+			a.upd.TriggerCheck()
+			a.Show()
+		})
 		systray.AddSeparator()
 		quit := systray.AddMenuItem("退出", "停止服务并退出 phoneMic")
 		quit.Click(func() { a.Quit() })

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -35,7 +34,7 @@ type StateView struct {
 	MicName   string         `json:"micName"`
 	Version   string         `json:"version"`
 	OS        string         `json:"os"`
-	Update    *update.Info   `json:"update"`
+	Update    update.State   `json:"update"`
 }
 
 const playerStallTimeout = 3 * time.Second
@@ -43,6 +42,7 @@ const playerStallTimeout = 3 * time.Second
 type App struct {
 	srv       *server.Server
 	mgr       *driver.Manager
+	upd       *update.Manager
 	httpsAddr string
 	httpAddr  string
 	quitFn    func()
@@ -51,7 +51,6 @@ type App struct {
 	match     string
 	connectMu sync.Mutex
 	done      atomic.Bool
-	update    atomic.Pointer[update.Info]
 
 	cbName  string
 	cbTotal uint64
@@ -62,14 +61,13 @@ type App struct {
 	hook windowHook
 }
 
-func NewApp(srv *server.Server, mgr *driver.Manager, match, httpsAddr, httpAddr string, quit func()) *App {
-	return &App{srv: srv, mgr: mgr, match: match, httpsAddr: httpsAddr, httpAddr: httpAddr, quitFn: quit}
+func NewApp(srv *server.Server, mgr *driver.Manager, upd *update.Manager, match, httpsAddr, httpAddr string, quit func()) *App {
+	return &App{srv: srv, mgr: mgr, upd: upd, match: match, httpsAddr: httpsAddr, httpAddr: httpAddr, quitFn: quit}
 }
 
 func (a *App) Run() {
 	go a.runTray()
 	go a.watch()
-	go func() { a.update.Store(update.Check(context.Background())) }()
 	a.runWindow()
 	a.stopTray()
 }
@@ -99,7 +97,19 @@ func (a *App) bindings() map[string]any {
 		"SwitchDevice":    a.SwitchDevice,
 		"QR":              a.qr,
 		"QuitApp":         func() { a.Quit() },
+		"CheckUpdate":     a.upd.TriggerCheck,
+		"ApplyUpdate":     a.upd.TriggerDownload,
+		"OpenUpdatePage":  update.OpenReleasePage,
+		"RestartApp":      a.restartApp,
 	}
+}
+
+func (a *App) restartApp() error {
+	if err := a.upd.Restart(); err != nil {
+		return err
+	}
+	a.Quit()
+	return nil
 }
 
 func (a *App) getState() (StateView, error) {
@@ -121,7 +131,7 @@ func (a *App) getState() (StateView, error) {
 		MicName:   mic,
 		Version:   version.Version,
 		OS:        runtime.GOOS,
-		Update:    a.update.Load(),
+		Update:    a.upd.State(),
 	}, nil
 }
 

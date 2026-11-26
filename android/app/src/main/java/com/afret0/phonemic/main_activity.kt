@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -71,6 +73,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -136,6 +140,36 @@ fun App() {
     var scanning by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableIntStateOf(0) }
     var doDiscovery by remember { mutableStateOf<Discovery?>(null) }
+    var updInfo by remember { mutableStateOf<AppUpdate?>(null) }
+    var updChecking by remember { mutableStateOf(false) }
+    var updProgress by remember { mutableStateOf<Pair<Long, Long>?>(null) }
+    var updJob by remember { mutableStateOf<Job?>(null) }
+    val updScope = rememberCoroutineScope()
+
+    fun startUpdateDownload(u: AppUpdate) {
+        if (!UpdateChecker.canInstallPackages(ctx)) {
+            localErr = "先在设置里允许 phoneMic 安装未知应用,返回后再点右下角版本号更新"
+            UpdateChecker.openInstallPermission(ctx)
+            return
+        }
+        updProgress = 0L to u.size
+        updJob = updScope.launch {
+            val result = runCatching {
+                UpdateChecker.download(ctx, u) { done, total -> updProgress = done to total }
+            }
+            updProgress = null
+            updJob = null
+            result.onSuccess { f -> UpdateChecker.installApk(ctx, f) }
+                .onFailure { e ->
+                    if (e is CancellationException) {
+                        android.util.Log.i("Update", "skip, 用户取消了更新下载")
+                    } else {
+                        android.util.Log.e("Update", "fail, 更新下载失败, tag: ${u.tag}, err: ${e.message ?: e.toString()}")
+                        localErr = "下载更新失败: ${e.message ?: e.toString()},点右下角版本号可重试"
+                    }
+                }
+        }
+    }
 
     fun doStart(srv: Srv) {
         persistSelected(ctx, srv)
@@ -196,6 +230,11 @@ fun App() {
         MicState.gain.value = loadGain(ctx)
         MicState.agcOn.value = loadAgc(ctx)
         MicState.lowLatency.value = loadLowLat(ctx)
+        runCatching { UpdateChecker.check(BuildConfig.VERSION_NAME) }
+            .onSuccess { u ->
+                if (u != null && u.tag != UpdateChecker.skippedTag(ctx)) updInfo = u
+            }
+            .onFailure { android.util.Log.i("Update", "skip, 启动更新检查失败不打扰, err: ${it.message ?: it.toString()}") }
     }
 
     Column(
@@ -313,10 +352,25 @@ fun App() {
         )
     }
     Text(
-        "v" + BuildConfig.VERSION_NAME,
+        if (updChecking) "检查更新中…" else "v" + BuildConfig.VERSION_NAME,
         color = Muted.copy(alpha = 0.7f), fontSize = 11.sp,
         modifier = Modifier.fillMaxSize().systemBarsPadding()
-            .wrapContentSize(Alignment.BottomEnd).padding(end = 12.dp, bottom = 4.dp),
+            .wrapContentSize(Alignment.BottomEnd)
+            .clickable(enabled = !updChecking && updProgress == null) {
+                updChecking = true
+                updScope.launch {
+                    val r = runCatching { UpdateChecker.check(BuildConfig.VERSION_NAME) }
+                    updChecking = false
+                    r.onSuccess { u ->
+                        if (u == null) Toast.makeText(ctx, "已是最新版本", Toast.LENGTH_SHORT).show()
+                        else updInfo = u
+                    }.onFailure {
+                        android.util.Log.e("Update", "fail, 手动更新检查失败, err: ${it.message ?: it.toString()}")
+                        localErr = "检查更新失败: ${it.message ?: it.toString()}"
+                    }
+                }
+            }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     )
     if (scanning) {
         ScanScreen(onResult = { raw ->
@@ -330,6 +384,76 @@ fun App() {
                 persistSelected(ctx, srv)
             }
         }, onClose = { scanning = false })
+    }
+    updInfo?.let { u ->
+        AlertDialog(
+            onDismissRequest = { updInfo = null },
+            containerColor = CardBg,
+            title = { Text("发现新版本 " + u.tag, color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+            text = {
+                Text(
+                    "当前 v${BuildConfig.VERSION_NAME} → ${u.tag},安装包 ${fmtBytes(u.size)},应用内下载后自动拉起安装。",
+                    color = Muted, fontSize = 13.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    "立即更新", color = Green, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                        .clickable { updInfo = null; startUpdateDownload(u) }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                )
+            },
+            dismissButton = {
+                Row {
+                    Text(
+                        "稍后", color = Muted, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .clickable { updInfo = null }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    )
+                    Text(
+                        "跳过此版本", color = Muted, fontSize = 14.sp,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .clickable { UpdateChecker.skipVersion(ctx, u.tag); updInfo = null }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    )
+                }
+            },
+        )
+    }
+    updProgress?.let { (done, total) ->
+        AlertDialog(
+            onDismissRequest = {},
+            containerColor = CardBg,
+            title = { Text("正在下载新版本", color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+            text = {
+                Column {
+                    Text(
+                        if (total > 0) "${fmtBytes(done)} / ${fmtBytes(total)}" else fmtBytes(done),
+                        color = Muted, fontSize = 13.sp,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    if (total > 0) {
+                        LinearProgressIndicator(
+                            progress = { done.toFloat() / total },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = Green, trackColor = Color(0xFF27273B),
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Green, trackColor = Color(0xFF27273B))
+                    }
+                }
+            },
+            confirmButton = {
+                Text(
+                    "取消下载", color = Muted, fontSize = 14.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                        .clickable { updJob?.cancel() }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                )
+            },
+        )
     }
 }
 

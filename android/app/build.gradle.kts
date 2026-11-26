@@ -12,8 +12,8 @@ android {
         applicationId = "com.afret0.phonemic"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.1.21"
+        versionCode = 23
+        versionName = "0.1.22"
     }
 
     buildTypes {
@@ -54,4 +54,5 @@ dependencies {
     implementation("androidx.camera:camera-view:1.4.1")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

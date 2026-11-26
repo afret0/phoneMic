@@ -43,6 +43,14 @@
 - 产物拷 `~/Downloads` 统一命名：`phoneMic_<ver>_android_debug.apk` / `phoneMic_<ver>_mac_arm64` / `phoneMic_<ver>_win_x64.exe`；仓库根 phone_mic / phone_mic.exe / *.exe / *.apk 已被 .gitignore（本地构建产物，不入库）。
 - mac 端暂无脚本：按同样口径手动 bump（gradle + internal/version/version.go 两处同步）后构建双端、重启桌面；部署目标同样只装小米13。
 
+## GitHub Release 更新与发布（2026-11-26 用户拍板）
+
+- 更新检查走 `api.github.com/repos/afret0/phoneMic/releases/latest`（仓库 public，匿名可查）；404=尚无 release 视为已是最新，启动检查失败静默不打扰。Go 实现在 `internal/update/update.go`（Manager：check/download/apply/restart，UI 经 GetState.update 驱动 desktop.html updCard），Android 在 `update_checker.kt` + main_activity.kt（右下角版本号可点=手动检查）。
+- tag 固定 `v<X.Y.Z>`；release 三资产命名必须与更新器匹配：`phoneMic_<ver>_mac_arm64` / `phoneMic_<ver>_win_x64.exe` / `phoneMic_<ver>_android_debug.apk`（精确名优先，后缀兜底）。下载校验 size + GitHub API 的 `digest`（sha256），不符即删。
+- 发布流程（commit 经用户确认后同轮）：push → `git tag v<ver>` → push tag → `gh release create v<ver>` 带 ~/Downloads 三产物。桌面下载替换后**手动点重启**（single.TakeOver 接管旧实例）；安卓弹窗每次启动都提示，**跳过此版本**持久化在 prefs `phone_mic` 的 `update_skip_tag`（只压自动提示，手动检查无视跳过）。
+- 桌面自替换用 `github.com/minio/selfupdate`（go.mod 已引）；安卓 APK 下载在 `getExternalFilesDir(DIRECTORY_DOWNLOADS)`，FileProvider authority `${applicationId}.fileprovider`（res/xml/file_paths.xml），需 REQUEST_INSTALL_PACKAGES + 未知来源授权。
+- 安卓单测跑 update_checker_test.kt 需 `testImplementation("org.json:json:…")`（android.jar 的 org.json 是抛异常桩）。
+
 ## Windows 本机工具链与一键构建（2026-11-26 实测）
 
 - 工具链都不在 PATH，`build.ps1` 已内置：Go=`~\tools\go\bin`（go1.27.3，全局 CGO_ENABLED=0 必须显式置 1）、mingw64=`~\tools\mingw64\bin`（gcc16 ucrt，CC/CXX 用默认 gcc/g++ 即可）、JDK21=`%LOCALAPPDATA%\Programs\jdk-21.0.13.1+2`、ANDROID_HOME=`%LOCALAPPDATA%\Android\Sdk`、adb=`%ANDROID_HOME%\platform-tools\adb.exe`。

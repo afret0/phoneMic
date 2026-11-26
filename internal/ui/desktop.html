@@ -168,7 +168,16 @@ footer .btn { margin-left: auto; }
     </div>
   </div>
 
-  <div class="banner" id="updBanner" style="margin-bottom:10px"></div>
+  <div class="card" id="updCard" style="display:none">
+    <div class="status" id="updStatus"><span class="dot"></span><span id="updText"></span></div>
+    <div class="meter" id="updMeter" style="display:none"><div class="fill" id="updFill"></div></div>
+    <div class="row" style="margin-top:10px; justify-content:flex-end">
+      <button class="btn mini" id="btnUpdPage" style="display:none">打开下载页</button>
+      <button class="btn mini" id="btnUpdRetry" style="display:none">重试</button>
+      <button class="btn primary mini" id="btnUpdGo" style="display:none">立即更新</button>
+      <button class="btn primary mini" id="btnUpdRestart" style="display:none">立即重启</button>
+    </div>
+  </div>
 
   <div class="card">
     <div class="cardHead">
@@ -261,7 +270,8 @@ footer .btn { margin-left: auto; }
 
   <footer>
     <span class="note" id="closeNote">关闭窗口会收进托盘继续推流</span>
-    <button class="btn danger mini" id="btnQuit">退出程序</button>
+    <button class="btn mini" id="btnUpdCheck" style="margin-left:auto">检查更新</button>
+    <button class="btn danger mini" id="btnQuit" style="margin-left:0">退出程序</button>
   </footer>
 </div>
 <div id="toast"></div>
@@ -270,6 +280,7 @@ footer .btn { margin-left: auto; }
 (() => {
   const $ = id => document.getElementById(id);
   let polling = false, lastDrvKey = '', lastEndpoints = '', devicesLoaded = false, busyUI = false;
+  let lastUpdKey = '', updManual = false, lastUpd = null;
 
   const VIRTUAL_MATCH = { windows: 'cable input', darwin: 'blackhole' };
   let virtualDefault = '';
@@ -442,28 +453,44 @@ footer .btn { margin-left: auto; }
   }
 
   function renderUpdate(u) {
-    const b = $('updBanner');
-    if (!u || !u.newer) { b.className = 'banner'; b.textContent = ''; b._v = ''; return; }
-    if (b._v === u.latest) return;
-    b._v = u.latest;
-    b.className = 'banner show';
-    b.textContent = '发现新版本 v' + u.latest + ';';
-    const add = (label, url) => {
-      if (!url) return;
-      const a = document.createElement('a');
-      a.href = url;
-      a.title = url;
-      a.textContent = label;
-      a.style.cssText = 'color:#A5B4FC;text-decoration:none;margin-left:8px';
-      a.onclick = async ev => {
-        ev.preventDefault();
-        toast(await copyText(url) ? '已复制' + label + '链接,请在浏览器打开' : '复制失败,请手动记录: ' + url, false);
-      };
-      b.appendChild(a);
-    };
-    add('发布页', u.url);
-    add('Windows 包', u.exe);
-    add('Android 包', u.apk);
+    lastUpd = u;
+    const key = [u.busy, u.op, u.checked, u.newer, u.ready, u.lastError].join('|');
+    if (key !== lastUpdKey) {
+      const prev = lastUpdKey.split('|');
+      if (updManual && prev[0] === 'true' && prev[1] === 'check' && !u.busy) {
+        updManual = false;
+        if (!u.lastError && !u.newer) toast('已是最新版本');
+      }
+      if (prev[4] !== 'true' && u.ready) toast('新版本已下载完成,点「立即重启」生效');
+      lastUpdKey = key;
+    }
+    const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+    const card = $('updCard');
+    let visible = true, cls = '', text = '';
+    if (u.busy && u.op === 'check') { cls = 'busy'; text = '正在检查更新…'; }
+    else if (u.busy && u.op === 'download') {
+      cls = 'busy';
+      const pct = u.total > 0 ? Math.floor(u.downloaded * 100 / u.total) : 0;
+      text = '正在下载 ' + u.latest + (u.total > 0 ? ' · ' + pct + '%' : ' · ' + Math.round(u.downloaded / 1024) + ' KB');
+    }
+    else if (u.ready) { cls = 'ok'; text = '新版本 ' + u.latest + ' 已就绪,重启后生效'; }
+    else if (u.lastError) { cls = 'bad'; text = '更新失败: ' + u.lastError; }
+    else if (u.newer && u.assetMissing) { cls = 'warn'; text = '发现新版本 ' + u.latest + '(无本平台安装包,请到下载页)'; }
+    else if (u.newer) { cls = 'ok'; text = '发现新版本 ' + u.latest + '(当前 v' + $('ver').textContent.slice(1) + ')'; }
+    else visible = false;
+    show(card, visible);
+    $('btnUpdCheck').disabled = !!u.busy;
+    if (!visible) return;
+    $('updStatus').className = 'status ' + cls;
+    $('updText').textContent = text;
+    show($('updMeter'), u.busy && u.op === 'download');
+    if (u.busy && u.op === 'download') {
+      $('updFill').style.width = (u.total > 0 ? Math.floor(u.downloaded * 100 / u.total) : 0) + '%';
+    }
+    show($('btnUpdGo'), u.newer && !u.assetMissing && !u.ready && !u.busy && !u.lastError);
+    show($('btnUpdRestart'), u.ready && !u.busy);
+    show($('btnUpdRetry'), !!u.lastError && !u.busy);
+    show($('btnUpdPage'), !u.busy);
   }
 
   function renderRate(d, dev) {
@@ -491,7 +518,7 @@ footer .btn { margin-left: auto; }
       renderStream(s.status || {});
       renderDevice(s.device || {});
       renderRate(s.driver, s.device || {});
-      renderUpdate(s.update);
+      renderUpdate(s.update || {});
       renderEndpoints(s.endpoints, s.certUrl);
       if (!devicesLoaded) refreshDevices(s.device && s.device.current ? s.device.current : '');
     } catch (e) {
@@ -542,6 +569,38 @@ footer .btn { margin-left: auto; }
     e.preventDefault();
     const url = $('certLink').textContent;
     if (url) toast(await copyText(url) ? '已复制证书下载地址,发到手机浏览器打开安装' : '复制失败,请手动输入地址', false);
+  };
+  $('btnUpdCheck').onclick = async () => {
+    try {
+      const ok = await window.CheckUpdate();
+      if (ok) updManual = true; else toast('已有操作进行中', true);
+    } catch (e) { toast('触发检查失败: ' + e, true); }
+    poll();
+  };
+  $('btnUpdGo').onclick = async () => {
+    try {
+      const ok = await window.ApplyUpdate();
+      toast(ok ? '开始下载新版本' : '暂无可下载的更新', !ok);
+    } catch (e) { toast('触发下载失败: ' + e, true); }
+    poll();
+  };
+  $('btnUpdRetry').onclick = async () => {
+    try {
+      if (lastUpd && lastUpd.newer && !lastUpd.assetMissing) {
+        const ok = await window.ApplyUpdate();
+        toast(ok ? '重新下载新版本' : '暂无可下载的更新', !ok);
+      } else {
+        const ok = await window.CheckUpdate();
+        if (ok) updManual = true; else toast('已有操作进行中', true);
+      }
+    } catch (e) { toast('重试失败: ' + e, true); }
+    poll();
+  };
+  $('btnUpdPage').onclick = async () => {
+    try { await window.OpenUpdatePage(); } catch (e) { toast('打开下载页失败: ' + e, true); }
+  };
+  $('btnUpdRestart').onclick = async () => {
+    try { await window.RestartApp(); } catch (e) { toast('重启失败: ' + e, true); }
   };
   $('btnQuit').onclick = () => window.QuitApp();
 

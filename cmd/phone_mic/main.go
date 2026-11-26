@@ -19,6 +19,7 @@ import (
 	"github.com/afret0/phoneMic/internal/server"
 	"github.com/afret0/phoneMic/internal/single"
 	"github.com/afret0/phoneMic/internal/ui"
+	"github.com/afret0/phoneMic/internal/update"
 )
 
 func main() {
@@ -119,7 +120,10 @@ func main() {
 		}
 	}()
 
-	app := ui.NewApp(srv, mgr, *device, *httpsAddr, *httpAddr, stop)
+	upd := update.NewManager()
+	upd.TriggerCheck()
+
+	app := ui.NewApp(srv, mgr, upd, *device, *httpsAddr, *httpAddr, stop)
 	srv.ListDevices = app.ListDevices
 	srv.SwitchDevice = app.SwitchDevice
 	srv.DeviceAuto = app.DeviceAuto
