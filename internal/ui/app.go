@@ -14,11 +14,10 @@ import (
 	"github.com/afret0/phoneMic/internal/certs"
 	"github.com/afret0/phoneMic/internal/driver"
 	"github.com/afret0/phoneMic/internal/server"
+	"github.com/afret0/phoneMic/internal/version"
 	qrcode "github.com/skip2/go-qrcode"
 	webview "github.com/webview/webview_go"
 )
-
-const Version = "0.1.8"
 
 type DeviceView struct {
 	Current string `json:"current"`
@@ -109,7 +108,7 @@ func (a *App) getState() (StateView, error) {
 		Endpoints: server.BannerURLs(a.httpsAddr),
 		CertURL:   certURL,
 		MicName:   mic,
-		Version:   Version,
+		Version:   version.Version,
 		OS:        runtime.GOOS,
 	}, nil
 }

@@ -33,10 +33,22 @@
 - 图像处理环境：`~/.copilot/tools/imgenv/bin/python`（venv + pillow，系统 python3 无 PIL）。改图标一律从 assets/logo.png 派生各尺寸，勿再逐尺寸手改。
 - 纯静态/favicon 验证不必碰音频：BlackHole 未加载时正式二进制起不来（先开设备后开 HTTP），可在会话目录建临时 go module（replace 指向本仓库）只 serve `web.StaticFS()` 后 curl。
 
-## 版本与交付惯例
+## 版本与交付惯例（2026-11-26 用户拍板：每次构建版本号 +1，任务完成后自动重启桌面+部署手机）
 
-- 用户可感知改动：`android/app/build.gradle.kts` 的 `versionName` 末位 +1、`versionCode` +1；commit message 沿用 `<versionName>: 中文描述`。
-- 产物拷 `~/Downloads` 统一命名：`phoneMic_<ver>_android_debug.apk` / `phoneMic_<ver>_mac_arm64` / `phoneMic_<ver>_win_x64.exe`；仓库根 phone_mic / phone_mic.exe 已被 .gitignore（本地构建产物，不入库）。
+- **每次构建版本号 +1**：仓库根 `build.ps1` 以 gradle `versionName` 为唯一源，自动末位 +1、`versionCode` +1，并同步 `internal/version/version.go`（Go 侧唯一版本常量，ui 与 server 都读它）。不要再手动双写版本号。
+- **三端右下角版本号**（fixed/overlay 常显，2026-11-26 用户拍板三端都加）：桌面 `desktop.html` 的 `.ver`（fixed 右下，数据 GetState.version）；手机网页 `index.html` 的 `#ver`（数据来自 `/status` 的 `version` 字段）；Android `main_activity.kt` 用 `BuildConfig.VERSION_NAME`（gradle 已开 `buildConfig = true`），以 fillMaxSize+wrapContentSize(BottomEnd) 的兄弟 overlay 盖在屏幕右下角（与 ScanScreen 同模式）。
+- **每次任务完成后（本轮有改动要提交时）自动走完全流程，不逐步询问**：最小验证（`CGO_ENABLED=1 go test ./...` + Android 单测）→ `.\build.ps1`（bump → 双端构建 → 拷 Downloads → 重启桌面 → 装手机）→ 验证部署结果（桌面 `/status.version`、手机 `dumpsys package` versionName + 截图右下角）→ commit → push。验证/构建失败不提交不 push，先报告。只读任务不触发。
+- commit message 沿用 `<versionName>: 中文描述`（取 bump 后的新版本号）。
+- 产物拷 `~/Downloads` 统一命名：`phoneMic_<ver>_android_debug.apk` / `phoneMic_<ver>_mac_arm64` / `phoneMic_<ver>_win_x64.exe`；仓库根 phone_mic / phone_mic.exe / *.exe / *.apk 已被 .gitignore（本地构建产物，不入库）。
+- mac 端暂无脚本：按同样口径手动 bump（gradle + internal/version/version.go 两处同步）后构建双端、重启桌面；部署目标同样只装小米13。
+
+## Windows 本机工具链与一键构建（2026-11-26 实测）
+
+- 工具链都不在 PATH，`build.ps1` 已内置：Go=`~\tools\go\bin`（go1.27.3，全局 CGO_ENABLED=0 必须显式置 1）、mingw64=`~\tools\mingw64\bin`（gcc16 ucrt，CC/CXX 用默认 gcc/g++ 即可）、JDK21=`%LOCALAPPDATA%\Programs\jdk-21.0.13.1+2`、ANDROID_HOME=`%LOCALAPPDATA%\Android\Sdk`、adb=`%ANDROID_HOME%\platform-tools\adb.exe`。
+- Gradle 用本机 `%LOCALAPPDATA%\Programs\gradle-8.14.3\bin\gradle.bat`（wrapper dist 未缓存、services.gradle.org 国内慢）；不存在时脚本回退 gradlew.bat。
+- **Windows 不能覆盖运行中的 exe**：脚本先构建 `phone_mic.new.exe` → `Stop-Process -Id` 停旧 `phone_mic` 进程并 WaitForExit → Move 替换 → `Start-Process` 启动（独立进程，会话结束不随之退出，已实测）。其它名字的旧实例（phoneMic_*）由 `single.TakeOver` 自动接管踢掉，脚本不用管。
+- **自动部署只装小米13（2211133C，Android 16）**（用户拍板）：遍历 `adb devices` 在线设备按 `getprop ro.product.model` 匹配，不写死无线 adb serial（形如 `adb-<serial>-<token>._adb-tls-connect._tcp`，token 会变）；离线跳过并说明。小米15（M154FF）不自动装。
+- MIUI 可能拒装（INSTALL_FAILED_USER_RESTRICTED）：需手机上确认或开发者选项开 USB 安装；脚本会原样报错。
 
 ## Android app（android/，Kotlin + Compose，与网页同契约）
 

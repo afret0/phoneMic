@@ -15,6 +15,7 @@ import (
 
 	"github.com/afret0/phoneMic/internal/audio"
 	"github.com/afret0/phoneMic/internal/certs"
+	"github.com/afret0/phoneMic/internal/version"
 	"github.com/afret0/phoneMic/web"
 	"github.com/gorilla/websocket"
 )
@@ -193,6 +194,7 @@ func (s *Server) Status() map[string]any {
 	status := map[string]any{
 		"streaming": cur != nil,
 		"computer":  computerName(),
+		"version":   version.Version,
 	}
 	if p := s.currentPlayer(); p != nil {
 		bufferedMs, dropOldest, underrun, written := p.JitterBuffer().Stats()

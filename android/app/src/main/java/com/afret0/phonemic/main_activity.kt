@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -298,6 +299,12 @@ fun App() {
             modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp), textAlign = TextAlign.Center,
         )
     }
+    Text(
+        "v" + BuildConfig.VERSION_NAME,
+        color = Muted.copy(alpha = 0.7f), fontSize = 11.sp,
+        modifier = Modifier.fillMaxSize().systemBarsPadding()
+            .wrapContentSize(Alignment.BottomEnd).padding(end = 12.dp, bottom = 4.dp),
+    )
     if (scanning) {
         ScanScreen(onResult = { raw ->
             scanning = false
