@@ -39,7 +39,7 @@ $apkSrc = Join-Path $PSScriptRoot 'android\app\build\outputs\apk\debug\app-debug
 Write-Host 'done, APK 构建完成'
 
 Write-Host 'recv, 开始构建桌面 exe'
-& go build -o phone_mic.new.exe ./cmd/phone_mic
+& go build -ldflags '-H windowsgui' -o phone_mic.new.exe ./cmd/phone_mic
 if ($LASTEXITCODE -ne 0) { throw "fail, go build exit: $LASTEXITCODE" }
 Write-Host 'done, exe 构建完成'
 

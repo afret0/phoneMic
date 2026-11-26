@@ -12,8 +12,8 @@ android {
         applicationId = "com.afret0.phonemic"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "0.1.12"
+        versionCode = 15
+        versionName = "0.1.14"
     }
 
     buildTypes {

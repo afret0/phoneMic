@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/afret0/phoneMic/internal/audio"
+	"golang.org/x/sys/windows"
 )
 
 //go:embed assets/vbcable_win_x64.zip
@@ -222,6 +223,7 @@ func runElevated(exePath string, args ...string) error {
 	ps := fmt.Sprintf("Start-Process -FilePath '%s' -ArgumentList %s -Verb RunAs -Wait",
 		strings.ReplaceAll(exePath, "'", "''"), strings.Join(quoted, ","))
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", ps)
+	cmd.SysProcAttr = &windows.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("UAC 授权或命令执行失败: %s, output: %s", err, string(out))

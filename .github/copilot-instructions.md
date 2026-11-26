@@ -6,7 +6,7 @@
 
 - **本机全局 `go env CGO_ENABLED=0`**：所有 go build/test/vet 必须显式前缀 `CGO_ENABLED=1`，否则 malgo 符号全部 undefined。
 - 测试与 mac 构建：`CGO_ENABLED=1 go test ./...`、`CGO_ENABLED=1 go build -o phone_mic ./cmd/phone_mic`（malgo 走 cgo，需 Xcode CLT）。
-- Windows 交叉编译（本机验证用）：`CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ go build -o phone_mic.exe ./cmd/phone_mic`；**CXX 必须显式指定**——只设 CC 时 cgo 用宿主 clang++ 编 webview.cc，报 `shlobj.h file not found`（GCC16/mingw-w64 14 实测）；mingw-w64 由 brew 安装（免 sudo；ghcr.io 被限速/断流时用 `HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles`）。
+- Windows 交叉编译（本机验证用）：`CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ go build -ldflags '-H windowsgui' -o phone_mic.exe ./cmd/phone_mic`；**CXX 必须显式指定**——只设 CC 时 cgo 用宿主 clang++ 编 webview.cc，报 `shlobj.h file not found`（GCC16/mingw-w64 14 实测）；mingw-w64 由 brew 安装（免 sudo；ghcr.io 被限速/断流时用 `HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles`）。**`-H windowsgui` 必须带**（2026-11-26 用户要求启动不弹控制台）：GUI 子系统双击/Start-Process 不再分配控制台，日志只走文件；CLI 参数（--list-devices/--install-driver/--uninstall-driver）经 attachParentConsole 挂回父终端输出；父进程无控制台后 powershell 子进程须 CREATE_NO_WINDOW（driver_windows.go 已内置）。
 - 运行：`./phone_mic`（HTTPS :8443 手机页面/WS，HTTP :8080 仅 CA 下载与跳转）；`--list-devices` 列输出设备；`--device <substr>` 指定输出设备；`--install-driver` / `--uninstall-driver` 安装/卸载虚拟声卡（都会弹系统管理员授权）。
 - 首次使用顺序：`--install-driver`（mac 装 BlackHole2ch，win 装 VB-Cable）→ **mac 需重启电脑**（见下）→ 启动 → 手机浏览器装页面引导里的 CA 证书 → 打开 `https://<局域网IP>:8443` 开始推流 → 会议 App 麦克风选虚拟声卡。
 

@@ -22,8 +22,6 @@ import (
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(openLogSink(), os.Stdout), nil)))
-
 	device := flag.String("device", driver.DefaultMatch, "声音写入设备名匹配子串(不区分大小写)")
 	listDevices := flag.Bool("list-devices", false, "列出所有声音写入设备后退出")
 	installDriver := flag.Bool("install-driver", false, "安装虚拟声卡(mac: BlackHole / win: VB-Cable), 需管理员授权")
@@ -32,6 +30,12 @@ func main() {
 	httpAddr := flag.String("http-addr", ":8080", "HTTP 监听地址(仅CA证书下载与跳转)")
 	certsDir := flag.String("certs-dir", defaultCertsDir(), "自签CA与服务证书存放目录(默认在程序所在目录, 保证手机端已信任的 CA 持久复用)")
 	flag.Parse()
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(openLogSink(), os.Stdout), nil)))
+	if *listDevices || *installDriver || *uninstallDriver {
+		attachParentConsole()
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(openLogSink(), os.Stdout), nil)))
+	}
 
 	switch {
 	case *listDevices:
