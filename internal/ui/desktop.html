@@ -170,7 +170,6 @@ footer .btn { margin-left: auto; }
 
   <div class="card" id="updCard" style="display:none">
     <div class="status" id="updStatus"><span class="dot"></span><span id="updText"></span></div>
-    <div class="meter" id="updMeter" style="display:none"><div class="fill" id="updFill"></div></div>
     <div class="row" style="margin-top:10px; justify-content:flex-end">
       <button class="btn mini" id="btnUpdPage" style="display:none">打开下载页</button>
       <button class="btn mini" id="btnUpdRetry" style="display:none">重试</button>
@@ -461,18 +460,13 @@ footer .btn { margin-left: auto; }
         updManual = false;
         if (!u.lastError && !u.newer) toast('已是最新版本');
       }
-      if (prev[4] !== 'true' && u.ready) toast('新版本已下载完成,点「立即重启」生效');
       lastUpdKey = key;
     }
     const show = (el, on) => { el.style.display = on ? '' : 'none'; };
     const card = $('updCard');
     let visible = true, cls = '', text = '';
     if (u.busy && u.op === 'check') { cls = 'busy'; text = '正在检查更新…'; }
-    else if (u.busy && u.op === 'download') {
-      cls = 'busy';
-      const pct = u.total > 0 ? Math.floor(u.downloaded * 100 / u.total) : 0;
-      text = '正在下载 ' + u.latest + (u.total > 0 ? ' · ' + pct + '%' : ' · ' + Math.round(u.downloaded / 1024) + ' KB');
-    }
+    else if (u.busy && u.op === 'download') { visible = false; }
     else if (u.ready) { cls = 'ok'; text = '新版本 ' + u.latest + ' 已就绪,重启后生效'; }
     else if (u.lastError) { cls = 'bad'; text = '更新失败: ' + u.lastError; }
     else if (u.newer && u.assetMissing) { cls = 'warn'; text = '发现新版本 ' + u.latest + '(无本平台安装包,请到下载页)'; }
@@ -483,10 +477,6 @@ footer .btn { margin-left: auto; }
     if (!visible) return;
     $('updStatus').className = 'status ' + cls;
     $('updText').textContent = text;
-    show($('updMeter'), u.busy && u.op === 'download');
-    if (u.busy && u.op === 'download') {
-      $('updFill').style.width = (u.total > 0 ? Math.floor(u.downloaded * 100 / u.total) : 0) + '%';
-    }
     show($('btnUpdGo'), u.newer && !u.assetMissing && !u.ready && !u.busy && !u.lastError);
     show($('btnUpdRestart'), u.ready && !u.busy);
     show($('btnUpdRetry'), !!u.lastError && !u.busy);
@@ -580,7 +570,7 @@ footer .btn { margin-left: auto; }
   $('btnUpdGo').onclick = async () => {
     try {
       const ok = await window.ApplyUpdate();
-      toast(ok ? '开始下载新版本' : '暂无可下载的更新', !ok);
+      if (!ok) toast('暂无可下载的更新', true);
     } catch (e) { toast('触发下载失败: ' + e, true); }
     poll();
   };
@@ -588,7 +578,7 @@ footer .btn { margin-left: auto; }
     try {
       if (lastUpd && lastUpd.newer && !lastUpd.assetMissing) {
         const ok = await window.ApplyUpdate();
-        toast(ok ? '重新下载新版本' : '暂无可下载的更新', !ok);
+        if (!ok) toast('暂无可下载的更新', true);
       } else {
         const ok = await window.CheckUpdate();
         if (ok) updManual = true; else toast('已有操作进行中', true);

@@ -35,7 +35,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -73,8 +72,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -91,6 +91,8 @@ private val Fg = Color(0xFFF8FAFC)
 private val Muted = Color(0xFF94A3B8)
 private val Danger = Color(0xFFEF4444)
 private val Amber = Color(0xFFF59E0B)
+
+private val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -142,31 +144,24 @@ fun App() {
     var doDiscovery by remember { mutableStateOf<Discovery?>(null) }
     var updInfo by remember { mutableStateOf<AppUpdate?>(null) }
     var updChecking by remember { mutableStateOf(false) }
-    var updProgress by remember { mutableStateOf<Pair<Long, Long>?>(null) }
-    var updJob by remember { mutableStateOf<Job?>(null) }
-    val updScope = rememberCoroutineScope()
+    var updDownloading by remember { mutableStateOf(false) }
 
     fun startUpdateDownload(u: AppUpdate) {
+        if (updDownloading) return
         if (!UpdateChecker.canInstallPackages(ctx)) {
             localErr = "先在设置里允许 phoneMic 安装未知应用,返回后再点右下角版本号更新"
             UpdateChecker.openInstallPermission(ctx)
             return
         }
-        updProgress = 0L to u.size
-        updJob = updScope.launch {
-            val result = runCatching {
-                UpdateChecker.download(ctx, u) { done, total -> updProgress = done to total }
-            }
-            updProgress = null
-            updJob = null
-            result.onSuccess { f -> UpdateChecker.installApk(ctx, f) }
+        updDownloading = true
+        val appCtx = ctx.applicationContext
+        updateScope.launch {
+            val result = runCatching { UpdateChecker.download(appCtx, u) }
+            updDownloading = false
+            result.onSuccess { f -> UpdateChecker.installApk(appCtx, f) }
                 .onFailure { e ->
-                    if (e is CancellationException) {
-                        android.util.Log.i("Update", "skip, 用户取消了更新下载")
-                    } else {
-                        android.util.Log.e("Update", "fail, 更新下载失败, tag: ${u.tag}, err: ${e.message ?: e.toString()}")
-                        localErr = "下载更新失败: ${e.message ?: e.toString()},点右下角版本号可重试"
-                    }
+                    android.util.Log.e("Update", "fail, 更新下载失败, tag: ${u.tag}, err: ${e.message ?: e.toString()}")
+                    localErr = "下载更新失败: ${e.message ?: e.toString()},点右下角版本号可重试"
                 }
         }
     }
@@ -356,9 +351,9 @@ fun App() {
         color = Muted.copy(alpha = 0.7f), fontSize = 11.sp,
         modifier = Modifier.fillMaxSize().systemBarsPadding()
             .wrapContentSize(Alignment.BottomEnd)
-            .clickable(enabled = !updChecking && updProgress == null) {
+            .clickable(enabled = !updChecking && !updDownloading) {
                 updChecking = true
-                updScope.launch {
+                updateScope.launch {
                     val r = runCatching { UpdateChecker.check(BuildConfig.VERSION_NAME) }
                     updChecking = false
                     r.onSuccess { u ->
@@ -419,39 +414,6 @@ fun App() {
                             .padding(horizontal = 14.dp, vertical = 12.dp),
                     )
                 }
-            },
-        )
-    }
-    updProgress?.let { (done, total) ->
-        AlertDialog(
-            onDismissRequest = {},
-            containerColor = CardBg,
-            title = { Text("正在下载新版本", color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
-            text = {
-                Column {
-                    Text(
-                        if (total > 0) "${fmtBytes(done)} / ${fmtBytes(total)}" else fmtBytes(done),
-                        color = Muted, fontSize = 13.sp,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    if (total > 0) {
-                        LinearProgressIndicator(
-                            progress = { done.toFloat() / total },
-                            modifier = Modifier.fillMaxWidth(),
-                            color = Green, trackColor = Color(0xFF27273B),
-                        )
-                    } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = Green, trackColor = Color(0xFF27273B))
-                    }
-                }
-            },
-            confirmButton = {
-                Text(
-                    "取消下载", color = Muted, fontSize = 14.sp,
-                    modifier = Modifier.clip(RoundedCornerShape(10.dp))
-                        .clickable { updJob?.cancel() }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                )
             },
         )
     }

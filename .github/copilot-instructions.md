@@ -49,6 +49,7 @@
 - 更新检查走 `api.github.com/repos/afret0/phoneMic/releases/latest`（仓库 public，匿名可查）；404=尚无 release 视为已是最新，启动检查失败静默不打扰。Go 实现在 `internal/update/update.go`（Manager：check/download/apply/restart，UI 经 GetState.update 驱动 desktop.html updCard），Android 在 `update_checker.kt` + main_activity.kt（右下角版本号可点=手动检查）。
 - tag 固定 `v<X.Y.Z>`；release 三资产命名必须与更新器匹配：`phoneMic_<ver>_mac_arm64` / `phoneMic_<ver>_win_x64.exe` / `phoneMic_<ver>_android_debug.apk`（精确名优先，后缀兜底）。下载校验 size + GitHub API 的 `digest`（sha256），不符即删。
 - 发布流程（commit 经用户确认后同轮）：push → `git tag v<ver>` → push tag → `gh release create v<ver>` 带 ~/Downloads 三产物。桌面下载替换后**手动点重启**（single.TakeOver 接管旧实例）；安卓弹窗每次启动都提示，**跳过此版本**持久化在 prefs `phone_mic` 的 `update_skip_tag`（只压自动提示，手动检查无视跳过）。
+- **下载双端纯静默（2026-11-27 用户拍板：两端都改、下载期间完全无提示）**：下载期间无进度条/弹窗/toast。桌面 download 期间隐藏 updCard，完成后卡片直接「已就绪+立即重启」；安卓点「立即更新」后走进程级 `updateScope`（退后台/关页面不取消），完成自动拉起安装器，失败走红色横幅，下载期间右下角版本号不可点。发现新版弹窗/稍后/跳过此版本/手动检查/立即重启均保持原样。
 - 桌面自替换用 `github.com/minio/selfupdate`（go.mod 已引）；安卓 APK 下载在 `getExternalFilesDir(DIRECTORY_DOWNLOADS)`，FileProvider authority `${applicationId}.fileprovider`（res/xml/file_paths.xml），需 REQUEST_INSTALL_PACKAGES + 未知来源授权。
 - 安卓单测跑 update_checker_test.kt 需 `testImplementation("org.json:json:…")`（android.jar 的 org.json 是抛异常桩）。
 

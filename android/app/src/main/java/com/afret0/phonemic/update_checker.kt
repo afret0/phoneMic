@@ -8,7 +8,6 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,7 +15,6 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.coroutineContext
 
 data class AppUpdate(val tag: String, val version: String, val apkUrl: String, val size: Long, val sha256: String)
 
@@ -117,7 +115,7 @@ object UpdateChecker {
         )
     }
 
-    suspend fun download(ctx: Context, u: AppUpdate, onProgress: (Long, Long) -> Unit): File =
+    suspend fun download(ctx: Context, u: AppUpdate): File =
         withContext(Dispatchers.IO) {
             val dir = ctx.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: error("外部文件目录不可用")
             dir.mkdirs()
@@ -136,13 +134,11 @@ object UpdateChecker {
                     tmp.outputStream().use { sink ->
                         val buf = ByteArray(64 * 1024)
                         while (true) {
-                            coroutineContext.ensureActive()
                             val n = src.read(buf)
                             if (n < 0) break
                             sink.write(buf, 0, n)
                             md.update(buf, 0, n)
                             total += n
-                            onProgress(total, u.size)
                         }
                     }
                     if (u.size > 0 && total != u.size) error("下载字节数不符: 期望 ${u.size}, 实际 $total")
