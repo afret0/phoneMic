@@ -32,6 +32,7 @@ type session struct {
 	conn      *websocket.Conn
 	remote    string
 	name      string
+	kind      string
 	lowLat    bool
 	bytes     atomic.Uint64
 	frames    atomic.Uint64
@@ -46,13 +47,21 @@ type Server struct {
 
 	ListDevices  func() ([]audio.OutputDevice, error)
 	SwitchDevice func(name string) error
+	SwitchMode   func(mode string) error
 	DeviceAuto   func() bool
 
 	playerMu sync.RWMutex
 	player   *audio.Player
 
-	connMu  sync.Mutex
-	current *session
+	capMu    sync.RWMutex
+	capturer *audio.Capturer
+
+	modeMu sync.RWMutex
+	mode   string
+
+	connMu       sync.Mutex
+	current      *session
+	lastSendFail time.Time
 
 	upgrader websocket.Upgrader
 }
@@ -60,6 +69,7 @@ type Server struct {
 func New(player *audio.Player, bundle *certs.Bundle, httpsAddr, httpAddr string) *Server {
 	return &Server{
 		player:    player,
+		mode:      "mic",
 		bundle:    bundle,
 		httpsAddr: httpsAddr,
 		httpAddr:  httpAddr,
@@ -94,11 +104,107 @@ func (s *Server) SetPlayer(p *audio.Player) {
 	s.connMu.Lock()
 	cur := s.current
 	s.connMu.Unlock()
-	if cur != nil && p != nil {
+	if cur != nil && cur.kind == "mic" && p != nil {
 		p.JitterBuffer().SetProfile(cur.lowLat)
 	}
 	if old != nil {
 		old.Close()
+	}
+}
+
+func (s *Server) Mode() string {
+	s.modeMu.RLock()
+	defer s.modeMu.RUnlock()
+	return s.mode
+}
+
+func (s *Server) SetMode(m string) {
+	s.modeMu.Lock()
+	old := s.mode
+	s.mode = m
+	s.modeMu.Unlock()
+	if old != m {
+		slog.Info("hit, 工作模式切换", "old", old, "new", m)
+	}
+}
+
+func (s *Server) currentCapturer() *audio.Capturer {
+	s.capMu.RLock()
+	defer s.capMu.RUnlock()
+	return s.capturer
+}
+
+func (s *Server) SetCapturer(c *audio.Capturer) {
+	s.capMu.Lock()
+	old := s.capturer
+	s.capturer = c
+	s.capMu.Unlock()
+
+	if old == nil && c != nil {
+		slog.Info("done, 采集设备已接入", "device", c.DeviceName())
+	}
+	if old != nil && c == nil {
+		slog.Info("hit, 采集设备已摘除", "device", old.DeviceName())
+	}
+	if old != nil && c != nil {
+		slog.Info("hit, 采集设备切换", "old", old.DeviceName(), "new", c.DeviceName())
+	}
+	if old != nil {
+		old.Close()
+	}
+}
+
+func (s *Server) CapturerName() string {
+	if c := s.currentCapturer(); c != nil {
+		return c.DeviceName()
+	}
+	return ""
+}
+
+func (s *Server) ActiveDeviceName() string {
+	if name := s.PlayerName(); name != "" {
+		return name
+	}
+	return s.CapturerName()
+}
+
+func (s *Server) SendSpeakerPCM(pcm []byte) bool {
+	s.connMu.Lock()
+	cur := s.current
+	s.connMu.Unlock()
+	if cur == nil || cur.kind != "speaker" {
+		return false
+	}
+	cur.bytes.Add(uint64(len(pcm)))
+	cur.frames.Add(1)
+	_ = cur.conn.SetWriteDeadline(time.Now().Add(time.Second))
+	if err := cur.conn.WriteMessage(websocket.BinaryMessage, pcm); err != nil {
+		s.connMu.Lock()
+		logged := time.Since(s.lastSendFail) > time.Second
+		if logged {
+			s.lastSendFail = time.Now()
+		}
+		s.connMu.Unlock()
+		if logged {
+			slog.Error("fail, 下发音频给手机失败, 关闭收听连接", "remote", cur.remote, "err", err)
+		}
+		_ = cur.conn.Close()
+		return false
+	}
+	return true
+}
+
+func (s *Server) KickCurrent(reason string) {
+	s.connMu.Lock()
+	cur := s.current
+	s.current = nil
+	s.connMu.Unlock()
+	if cur != nil {
+		slog.Info("hit, 踢掉当前连接", "remote", cur.remote, "kind", cur.kind, "reason", reason)
+		_ = cur.conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(kickCloseCode, reason),
+			time.Now().Add(time.Second))
+		_ = cur.conn.Close()
 	}
 }
 
@@ -111,9 +217,11 @@ func (s *Server) Run(ctx context.Context) error {
 	httpsMux := http.NewServeMux()
 	httpsMux.Handle("/", http.FileServer(http.FS(staticSub)))
 	httpsMux.HandleFunc("/ws", s.handleWS)
+	httpsMux.HandleFunc("/speaker", s.handleSpeakerWS)
 	httpsMux.HandleFunc("/status", s.handleStatus)
 	httpsMux.HandleFunc("/devices", s.handleDevices)
 	httpsMux.HandleFunc("/device", s.handleDeviceSwitch)
+	httpsMux.HandleFunc("/mode", s.handleMode)
 	httpsMux.HandleFunc("/ca.crt", s.serveCA)
 
 	httpMux := http.NewServeMux()
@@ -207,9 +315,45 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"devices": devices,
-		"current": s.PlayerName(),
+		"current": s.ActiveDeviceName(),
 		"auto":    s.DeviceAuto != nil && s.DeviceAuto(),
 	})
+}
+
+func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": s.Mode()})
+	case http.MethodPost:
+		if s.SwitchMode == nil {
+			slog.Error("fail, 模式切换接口未接线")
+			http.Error(w, "mode switch unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+			slog.Error("fail, 模式切换请求解析失败", "remote", r.RemoteAddr, "err", err)
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Mode != "mic" && req.Mode != "speaker" {
+			slog.Info("skip, 模式取值非法", "判定", "mode 只能是 mic 或 speaker", "mode", req.Mode)
+			http.Error(w, "invalid mode", http.StatusBadRequest)
+			return
+		}
+		slog.Info("recv, 切换工作模式", "remote", r.RemoteAddr, "mode", req.Mode)
+		if err := s.SwitchMode(req.Mode); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": s.Mode()})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleDeviceSwitch(w http.ResponseWriter, r *http.Request) {
@@ -230,13 +374,13 @@ func (s *Server) handleDeviceSwitch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	slog.Info("recv, 手机端切换声音写入设备", "remote", r.RemoteAddr, "name", req.Name)
+	slog.Info("recv, 手机端切换声音设备", "remote", r.RemoteAddr, "name", req.Name)
 	if err := s.SwitchDevice(req.Name); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"current": s.PlayerName()})
+	_ = json.NewEncoder(w).Encode(map[string]any{"current": s.ActiveDeviceName()})
 }
 
 func (s *Server) PlayerName() string {
@@ -255,6 +399,16 @@ func (s *Server) Status() map[string]any {
 		"streaming": cur != nil,
 		"computer":  computerName(),
 		"version":   version.Version,
+		"mode":      s.Mode(),
+	}
+	if c := s.currentCapturer(); c != nil {
+		captured, noSink, captureCb := c.Stats()
+		status["captureDevice"] = c.DeviceName()
+		status["capturedBytes"] = captured
+		status["noSinkBytes"] = noSink
+		status["captureCallbacks"] = captureCb
+		status["captureLevel"] = c.Level()
+		status["device"] = c.DeviceName()
 	}
 	if p := s.currentPlayer(); p != nil {
 		bufferedMs, dropOldest, underrun, written := p.JitterBuffer().Stats()
@@ -279,8 +433,32 @@ func (s *Server) Status() map[string]any {
 		status["dropSenderBytes"] = cur.dropped.Load()
 		status["remote"] = cur.remote
 		status["sender"] = cur.name
+		status["sessionKind"] = cur.kind
 	}
 	return status
+}
+
+func (s *Server) rejectWrongMode(conn *websocket.Conn, remote, want string) {
+	slog.Info("skip, 连接方向与当前模式不符拒绝", "判定", "连接方向须与 mode 一致", "remote", remote, "mode", s.Mode(), "want", want)
+	_ = conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(kickCloseCode, "server in "+s.Mode()+" mode"),
+		time.Now().Add(time.Second))
+	_ = conn.Close()
+}
+
+func (s *Server) replaceCurrent(sess *session) {
+	s.connMu.Lock()
+	old := s.current
+	s.current = sess
+	s.connMu.Unlock()
+
+	if old != nil {
+		slog.Info("hit, 新连接接入, 踢掉旧连接", "old", old.remote, "oldName", old.name, "oldKind", old.kind, "new", sess.remote, "newName", sess.name, "newKind", sess.kind)
+		_ = old.conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(kickCloseCode, "replaced by new sender"),
+			time.Now().Add(time.Second))
+		_ = old.conn.Close()
+	}
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -289,20 +467,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		slog.Error("fail, WS 升级失败", "remote", r.RemoteAddr, "err", err)
 		return
 	}
-
-	sess := &session{conn: conn, remote: r.RemoteAddr, name: sanitizeSenderName(r.URL.Query().Get("name")), lowLat: r.URL.Query().Get("lat") == "low", startedAt: time.Now()}
-	s.connMu.Lock()
-	old := s.current
-	s.current = sess
-	s.connMu.Unlock()
-
-	if old != nil {
-		slog.Info("hit, 新推流接入, 踢掉旧连接", "old", old.remote, "oldName", old.name, "new", sess.remote, "newName", sess.name)
-		_ = old.conn.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(kickCloseCode, "replaced by new sender"),
-			time.Now().Add(time.Second))
-		_ = old.conn.Close()
+	if s.Mode() != "mic" {
+		s.rejectWrongMode(conn, r.RemoteAddr, "mic")
+		return
 	}
+
+	sess := &session{conn: conn, remote: r.RemoteAddr, name: sanitizeSenderName(r.URL.Query().Get("name")), kind: "mic", lowLat: r.URL.Query().Get("lat") == "low", startedAt: time.Now()}
+	s.replaceCurrent(sess)
 
 	player := s.currentPlayer()
 	if player != nil {
@@ -378,6 +549,74 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	slog.Info("done, 手机推流断开", fields...)
 }
 
+func (s *Server) handleSpeakerWS(w http.ResponseWriter, r *http.Request) {
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		slog.Error("fail, WS 升级失败", "remote", r.RemoteAddr, "err", err)
+		return
+	}
+	if s.Mode() != "speaker" {
+		s.rejectWrongMode(conn, r.RemoteAddr, "speaker")
+		return
+	}
+
+	sess := &session{conn: conn, remote: r.RemoteAddr, name: sanitizeSenderName(r.URL.Query().Get("name")), kind: "speaker", startedAt: time.Now()}
+	s.replaceCurrent(sess)
+
+	if s.currentCapturer() == nil {
+		slog.Info("hit, 无采集设备, 暂无音频可下发", "remote", sess.remote)
+	}
+	slog.Info("recv, 手机收听已连接", "remote", sess.remote, "name", sess.name)
+
+	conn.SetReadLimit(wsReadLimit)
+	_ = conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsPongTimeout))
+	})
+
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(wsPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingDone:
+				return
+			case <-ticker.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second)); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
+	}
+	close(pingDone)
+	_ = conn.Close()
+
+	s.connMu.Lock()
+	if s.current == sess {
+		s.current = nil
+	}
+	s.connMu.Unlock()
+
+	fields := []any{
+		"remote", sess.remote,
+		"name", sess.name,
+		"durationSec", int(time.Since(sess.startedAt).Seconds()),
+		"sessionBytes", sess.bytes.Load(), "sessionFrames", sess.frames.Load(),
+	}
+	if c := s.currentCapturer(); c != nil {
+		captured, noSink, _ := c.Stats()
+		fields = append(fields, "capturedBytes", captured, "noSinkBytes", noSink)
+	}
+	slog.Info("done, 手机收听断开", fields...)
+}
+
 func (s *Server) dropCurrent(reason string) {
 	s.connMu.Lock()
 	cur := s.current
@@ -405,7 +644,11 @@ func (s *Server) statsLoop(ctx context.Context) {
 			if cur == nil {
 				continue
 			}
-			fields := []any{"remote", cur.remote, "name", cur.name, "sessionBytes", cur.bytes.Load()}
+			fields := []any{"remote", cur.remote, "name", cur.name, "kind", cur.kind, "mode", s.Mode(), "sessionBytes", cur.bytes.Load()}
+			if c := s.currentCapturer(); c != nil {
+				captured, noSink, captureCb := c.Stats()
+				fields = append(fields, "capturedBytes", captured, "noSinkBytes", noSink, "captureCallbacks", captureCb)
+			}
 			if p := s.currentPlayer(); p != nil {
 				bufferedMs, dropTotal, underrun, _ := p.JitterBuffer().Stats()
 				silentCb, totalCb := p.CallbackStats()

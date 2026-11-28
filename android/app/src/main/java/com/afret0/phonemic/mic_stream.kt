@@ -127,6 +127,52 @@ class DriftTrim {
     }
 }
 
+internal suspend fun runSession(ctx: Context, srv: Srv, tag: String, once: suspend (OkHttpClient, Srv) -> Int) {
+    var attempt = 0
+    var lastReason = ""
+    var fatal: String? = null
+
+    while (coroutineContext.isActive) {
+        MicState.phase.value = if (attempt == 0 && MicState.startedAt.value == 0L) Phase.Connecting else Phase.Reconnecting(attempt, lastReason)
+        try {
+            val client = CaStore.ensureTrusted(ctx, srv)
+            val code = once(client, srv)
+            attempt = 0
+            if (code == 4001) {
+                Log.i(tag, "skip, 连接被替换或电脑切换了模式, code: 4001")
+                fatal = "连接已被替换（新设备接入或电脑切换了模式）"
+                break
+            }
+            lastReason = "连接断开(code $code)"
+            Log.e(tag, "fail, 会话结束进入重连, code: $code")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            lastReason = e.message ?: e.javaClass.simpleName
+            Log.e(tag, "fail, 会话异常进入重连, err: $lastReason")
+        }
+        attempt++
+        val backoffMs = minOf(30000L, 1000L shl minOf(attempt - 1, 5))
+        MicState.phase.value = Phase.Reconnecting(attempt, lastReason)
+        Log.i(tag, "hit, 退避后重连, attempt: $attempt, backoffMs: $backoffMs")
+        delay(backoffMs)
+    }
+    MicState.level.value = 0f
+    MicState.phase.value = fatal?.let { Phase.Failed(it) } ?: Phase.Idle
+}
+
+internal fun parseStatus(json: String): PcStatus {
+    val j = JSONObject(json)
+    return PcStatus(
+        computer = j.optString("computer", ""),
+        device = j.optString("device", "-"),
+        bufferedMs = j.optInt("bufferedMs", 0),
+        streaming = j.optBoolean("streaming", false),
+        sessionBytes = j.optLong("sessionBytes", 0),
+        mode = j.optString("mode", "mic"),
+    )
+}
+
 class MicEngine(private val ctx: Context) {
     private val drift = DriftTrim()
     @Volatile private var trimPpm = 0
@@ -137,39 +183,9 @@ class MicEngine(private val ctx: Context) {
         trimPpm = 0
         Log.i(TAG, "recv, 推流会话开始, host: ${srv.host}, port: ${srv.port}")
         val pollJob = launch { pollStatus(srv) }
-        var attempt = 0
-        var lastReason = ""
-        var fatal: String? = null
-
-        while (coroutineContext.isActive) {
-            MicState.phase.value = if (attempt == 0 && MicState.startedAt.value == 0L) Phase.Connecting else Phase.Reconnecting(attempt, lastReason)
-            try {
-                val client = CaStore.ensureTrusted(ctx, srv)
-                val code = streamOnce(client, srv)
-                attempt = 0
-                if (code == 4001) {
-                    Log.i(TAG, "skip, 被新的推流设备替换, code: 4001")
-                    fatal = "已被新的推流设备替换"
-                    break
-                }
-                lastReason = "连接断开(code $code)"
-                Log.e(TAG, "fail, 会话结束进入重连, code: $code")
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastReason = e.message ?: e.javaClass.simpleName
-                Log.e(TAG, "fail, 推流异常进入重连, err: $lastReason")
-            }
-            attempt++
-            val backoffMs = minOf(30000L, 1000L shl minOf(attempt - 1, 5))
-            MicState.phase.value = Phase.Reconnecting(attempt, lastReason)
-            Log.i(TAG, "hit, 退避后重连, attempt: $attempt, backoffMs: $backoffMs")
-            delay(backoffMs)
-        }
+        runSession(ctx, srv, TAG) { client, s -> streamOnce(client, s) }
         pollJob.cancelAndJoin()
-        MicState.level.value = 0f
-        MicState.phase.value = fatal?.let { Phase.Failed(it) } ?: Phase.Idle
-        Log.i(TAG, "done, 推流会话退出, sentBytes: ${MicState.sentBytes.value}, fatal: $fatal")
+        Log.i(TAG, "done, 推流会话退出, sentBytes: ${MicState.sentBytes.value}, phase: ${MicState.phase.value}")
     }
 
     private suspend fun streamOnce(client: OkHttpClient, srv: Srv): Int {
@@ -320,13 +336,7 @@ class MicEngine(private val ctx: Context) {
                 client!!.newCall(Request.Builder().url("https://${srv.host}:${srv.port}/status").build()).execute().use { r ->
                     if (r.isSuccessful) {
                         val j = JSONObject(r.body?.string() ?: "{}")
-                        MicState.pcStatus.value = PcStatus(
-                            computer = j.optString("computer", ""),
-                            device = j.optString("device", "-"),
-                            bufferedMs = j.optInt("bufferedMs", 0),
-                            streaming = j.optBoolean("streaming", false),
-                            sessionBytes = j.optLong("sessionBytes", 0),
-                        )
+                        MicState.pcStatus.value = parseStatus(j.toString())
                         if (j.optBoolean("streaming", false) && j.has("bufferedMs")) {
                             val bufferedMs = j.optInt("bufferedMs", 0)
                             drift.setTarget(j.optInt("bufferedTargetMs", 100))

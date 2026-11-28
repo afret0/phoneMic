@@ -51,7 +51,27 @@ suspend fun switchPcDevice(ctx: Context, srv: Srv, name: String): String = withC
     client.newCall(Request.Builder().url("https://${srv.host}:${srv.port}/device").post(body).build()).execute().use { r ->
         val text = r.body?.string() ?: ""
         if (!r.isSuccessful) error(text.ifEmpty { "切换失败 HTTP ${r.code}" })
-        Log.i(TAG, "done, 电脑声音写入设备已切换, host: ${srv.host}, name: $name")
+        Log.i(TAG, "done, 电脑声音设备已切换, host: ${srv.host}, name: $name")
         JSONObject(text).optString("current", "")
+    }
+}
+
+suspend fun fetchPcStatus(ctx: Context, srv: Srv): PcStatus = withContext(Dispatchers.IO) {
+    val client = CaStore.ensureTrusted(ctx, srv).newBuilder().callTimeout(8, TimeUnit.SECONDS).build()
+    client.newCall(Request.Builder().url("https://${srv.host}:${srv.port}/status").build()).execute().use { r ->
+        if (!r.isSuccessful) error("获取状态失败 HTTP ${r.code}")
+        parseStatus(r.body?.string() ?: "{}")
+    }
+}
+
+suspend fun switchPcMode(ctx: Context, srv: Srv, mode: StreamMode): String = withContext(Dispatchers.IO) {
+    val client = CaStore.ensureTrusted(ctx, srv).newBuilder().callTimeout(8, TimeUnit.SECONDS).build()
+    val name = if (mode == StreamMode.Speaker) "speaker" else "mic"
+    val body = JSONObject().put("mode", name).toString().toRequestBody("application/json".toMediaType())
+    client.newCall(Request.Builder().url("https://${srv.host}:${srv.port}/mode").post(body).build()).execute().use { r ->
+        val text = r.body?.string() ?: ""
+        if (!r.isSuccessful) error(text.ifEmpty { "切换模式失败 HTTP ${r.code}" })
+        Log.i(TAG, "done, 电脑工作模式已切换, host: ${srv.host}, mode: $name")
+        JSONObject(text).optString("mode", name)
     }
 }

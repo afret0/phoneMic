@@ -100,6 +100,8 @@ select {
   padding: 0 10px; font-size: 13px; font-family: inherit;
 }
 select:focus-visible { outline: 2px solid #FFF; outline-offset: 2px; }
+.seg { display: flex; gap: 8px; }
+.seg .btn { flex: 1; min-height: 40px; }
 .curDev { font-size: 13px; font-weight: 600; margin-bottom: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .curDev .none { color: var(--warn); font-weight: 500; }
 .meter { height: 10px; border-radius: 999px; background: var(--muted); overflow: hidden; margin: 10px 0 4px; }
@@ -168,6 +170,24 @@ footer .btn { margin-left: auto; }
     </div>
   </div>
 
+  <div class="card">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 5 6H2v6h3l3 3V3z"/><path d="M16 8a5 5 0 0 1 0 8"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>
+      <span class="label">工作模式</span>
+    </div>
+    <div class="seg" role="radiogroup" aria-label="工作模式">
+      <button class="btn primary" id="btnModeMic" role="radio" aria-checked="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        手机当麦克风
+      </button>
+      <button class="btn" id="btnModeSpk" role="radio" aria-checked="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        手机当喇叭
+      </button>
+    </div>
+    <div class="hint" id="modeHint">手机收音 → 电脑虚拟声卡,会议 App 把它选作麦克风</div>
+  </div>
+
   <div class="card" id="updCard" style="display:none">
     <div class="status" id="updStatus"><span class="dot"></span><span id="updText"></span></div>
     <div class="row" style="margin-top:10px; justify-content:flex-end">
@@ -205,7 +225,7 @@ footer .btn { margin-left: auto; }
   <div class="card">
     <div class="cardHead">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
-      <span class="label">声音写入设备(虚拟声卡)</span>
+      <span class="label" id="devCardLabel">声音写入设备(虚拟声卡)</span>
       <button class="btn mini right" id="btnRefresh">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         刷新
@@ -217,13 +237,14 @@ footer .btn { margin-left: auto; }
       <button class="btn" id="btnSwitch">切换</button>
     </div>
     <div class="banner" id="spkWarn">正在写入物理扬声器:手机声音会从音响外放,可能被手机再次拾取产生啸叫。建议切换到虚拟声卡。</div>
+    <div class="banner" id="capWarn">正在采集物理麦克风:发给手机的是这支麦克风的拾音,不是电脑播放的声音。建议切换到虚拟声卡。</div>
     <div class="banner" id="rateWarn"></div>
   </div>
 
   <div class="card">
     <div class="cardHead">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      <span class="label">推流状态</span>
+      <span class="label" id="strCardLabel">推流状态</span>
     </div>
     <div class="status" id="strStatus"><span class="dot"></span><span id="strText">等待手机连接</span></div>
     <div class="meter"><div class="fill" id="levelFill"></div></div>
@@ -234,7 +255,7 @@ footer .btn { margin-left: auto; }
     <div class="stats">
       <div class="stat"><div class="k">时长</div><div class="v" id="durText">0:00</div></div>
       <div class="stat"><div class="k">缓冲</div><div class="v" id="bufText">0 <small>ms</small></div></div>
-      <div class="stat"><div class="k">已写入</div><div class="v" id="writtenText">0 <small>KB</small></div></div>
+      <div class="stat"><div class="k" id="writtenLabel">已写入</div><div class="v" id="writtenText">0 <small>KB</small></div></div>
     </div>
     <div class="diag" id="diagText"></div>
   </div>
@@ -260,10 +281,15 @@ footer .btn { margin-left: auto; }
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
       <span class="label">会议 App 设备选择</span>
     </div>
-    <div class="steps">
+    <div class="steps" id="guideMicSteps">
       <div>麦克风(输入)选 <b id="guideMic"></b> — 手机的声音从这里进入会议</div>
       <div>扬声器(输出)选<b>真实耳机或音箱</b> — 选虚拟声卡会听不到对方声音</div>
       <div>上方「声音写入设备」保持<b>自动(虚拟声卡)</b> — 选物理扬声器会外放啸叫</div>
+    </div>
+    <div class="steps" id="guideSpkSteps" style="display:none">
+      <div>把<b>系统声音输出</b>切到虚拟声卡(mac: 系统设置→声音→输出选 BlackHole 2ch / win: 任务栏喇叭→CABLE Input)</div>
+      <div>手机点「喇叭」开始收听 — 电脑播放的声音只从手机出声,本机扬声器不再响</div>
+      <div>喇叭模式下手机麦克风已停用 — 切回「手机当麦克风」即可恢复收音</div>
     </div>
   </div>
 
@@ -281,8 +307,12 @@ footer .btn { margin-left: auto; }
   let polling = false, lastDrvKey = '', lastEndpoints = '', devicesLoaded = false, busyUI = false;
   let lastUpdKey = '', updManual = false, lastUpd = null;
 
-  const VIRTUAL_MATCH = { windows: 'cable input', darwin: 'blackhole' };
+  const VIRTUAL_MATCH = {
+    mic: { windows: 'cable input', darwin: 'blackhole' },
+    speaker: { windows: 'cable output', darwin: 'blackhole' },
+  };
   let virtualDefault = '';
+  let curMode = 'mic', modeBusy = false;
 
   const copyText = async text => {
     try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
@@ -371,37 +401,65 @@ footer .btn { margin-left: auto; }
     }
   }
 
+  function renderMode(mode) {
+    const m = mode === 'speaker' ? 'speaker' : 'mic';
+    if (m === curMode) return;
+    console.info('hit, 工作模式跟随服务端, old: ' + curMode + ', new: ' + m);
+    curMode = m;
+    devicesLoaded = false;
+    const spk = m === 'speaker';
+    $('btnModeMic').className = spk ? 'btn' : 'btn primary';
+    $('btnModeSpk').className = spk ? 'btn primary' : 'btn';
+    $('btnModeMic').setAttribute('aria-checked', String(!spk));
+    $('btnModeSpk').setAttribute('aria-checked', String(spk));
+    $('modeHint').textContent = spk
+      ? '电脑声音 → 手机播放:把系统输出切到虚拟声卡,手机点「喇叭」收听(与麦克风互斥)'
+      : '手机收音 → 电脑虚拟声卡,会议 App 把它选作麦克风';
+    $('devCardLabel').textContent = spk ? '声音采集设备(虚拟声卡)' : '声音写入设备(虚拟声卡)';
+    $('strCardLabel').textContent = spk ? '喇叭推流状态' : '推流状态';
+    $('writtenLabel').textContent = spk ? '已下发' : '已写入';
+    $('guideMicSteps').style.display = spk ? 'none' : '';
+    $('guideSpkSteps').style.display = spk ? '' : 'none';
+  }
+
   function renderStream(s) {
+    const spk = curMode === 'speaker';
     const live = !!s.streaming;
     const pill = $('svcPill');
     pill.className = live ? 'pill live' : 'pill';
-    $('svcText').textContent = live ? '手机推流中' : '服务运行中 · 等待手机连接';
+    $('svcText').textContent = live ? (spk ? '手机收听中' : '手机推流中') : '服务运行中 · 等待手机连接';
 
     const st = $('strStatus');
     st.className = live ? 'status ok' : 'status';
     $('strText').textContent = live ? '手机在线' : '等待手机连接';
     $('remoteText').textContent = live ? [s.sender, s.remote].filter(Boolean).join(' · ') : '';
 
-    const level = typeof s.level === 'number' ? s.level : 0;
+    const rawLevel = spk ? s.captureLevel : s.level;
+    const level = typeof rawLevel === 'number' ? rawLevel : 0;
     $('levelFill').style.width = Math.min(100, Math.round(Math.sqrt(level) * 100)) + '%';
     $('dbText').textContent = level > 0.0001 ? (20 * Math.log10(level)).toFixed(1) + ' dB' : '-- dB';
 
     $('durText').textContent = fmtDur((s.sessionBytes || 0) / 96000);
-    $('bufText').innerHTML = (s.bufferedMs || 0) + ' <small>ms</small>';
-    const kb = (s.writtenBytes || 0) / 1024;
+    $('bufText').innerHTML = spk ? '—' : (s.bufferedMs || 0) + ' <small>ms</small>';
+    const kb = (spk ? (s.capturedBytes || 0) : (s.writtenBytes || 0)) / 1024;
     $('writtenText').innerHTML = (kb > 1024 ? (kb / 1024).toFixed(1) + ' <small>MB</small>' : Math.round(kb) + ' <small>KB</small>');
-    $('diagText').textContent = '丢帧 ' + (s.dropOldestBytes || 0) + ' B · 欠载 ' + (s.underrunBytes || 0) + ' B · 静音回调 ' + (s.silentCallbacks || 0) + '/' + (s.totalCallbacks || 0);
+    $('diagText').textContent = spk
+      ? '无收听丢弃 ' + (s.noSinkBytes || 0) + ' B · 采集回调 ' + (s.captureCallbacks || 0)
+      : '丢帧 ' + (s.dropOldestBytes || 0) + ' B · 欠载 ' + (s.underrunBytes || 0) + ' B · 静音回调 ' + (s.silentCallbacks || 0) + '/' + (s.totalCallbacks || 0);
   }
 
   function renderDevice(dev) {
     const el = $('curDev');
+    const spk = curMode === 'speaker';
     if (dev.current) {
       el.innerHTML = '';
-      el.textContent = '当前写入: ' + dev.current;
-      $('spkWarn').className = isVirtual(dev.current) ? 'banner' : 'banner show';
+      el.textContent = (spk ? '当前采集: ' : '当前写入: ') + dev.current;
+      $('spkWarn').className = !spk && !isVirtual(dev.current) ? 'banner show' : 'banner';
+      $('capWarn').className = spk && !isVirtual(dev.current) ? 'banner show' : 'banner';
     } else {
-      el.innerHTML = '<span class="none">未连接声音写入设备(等待驱动安装或手动选择)</span>';
+      el.innerHTML = '<span class="none">未连接声音' + (spk ? '采集' : '写入') + '设备(等待驱动安装或手动选择)</span>';
       $('spkWarn').className = 'banner';
+      $('capWarn').className = 'banner';
     }
     if (devicesLoaded && !busyUI && document.activeElement !== $('devSelect')) {
       const sel = $('devSelect');
@@ -485,7 +543,7 @@ footer .btn { margin-left: auto; }
 
   function renderRate(d, dev) {
     const el = $('rateWarn');
-    const show = d && d.cableRate && d.cableRate !== 48000 && isVirtual(dev.current);
+    const show = curMode !== 'speaker' && d && d.cableRate && d.cableRate !== 48000 && isVirtual(dev.current);
     if (!show) { el.className = 'banner'; el.textContent = ''; return; }
     el.className = 'banner show';
     el.textContent = 'CABLE Input 的系统默认格式是 ' + d.cableRate + ' Hz(应为 48000 Hz),Windows 会重采样损耗音质。修改: 控制面板 → 声音 → 播放 → CABLE Input → 属性 → 高级 → 48000 Hz。';
@@ -496,10 +554,11 @@ footer .btn { margin-left: auto; }
     polling = true;
     try {
       const s = await window.GetState();
-      virtualDefault = VIRTUAL_MATCH[s.os] || '';
+      const st0 = s.status || {};
+      renderMode(st0.mode);
+      virtualDefault = (VIRTUAL_MATCH[curMode] || {})[s.os] || '';
       $('ver').textContent = 'v' + s.version;
       $('guideMic').textContent = s.micName;
-      const st0 = s.status || {};
       $('pcName').textContent = st0.computer || '';
       $('pcPill').style.display = st0.computer ? '' : 'none';
       $('pcPill').title = '本机电脑名: ' + (st0.computer || '');
@@ -539,6 +598,25 @@ footer .btn { margin-left: auto; }
     } catch (e) { toast('触发更新失败: ' + e, true); }
     poll();
   };
+  async function switchMode(m) {
+    if (modeBusy || m === curMode) return;
+    modeBusy = true;
+    $('btnModeMic').disabled = true;
+    $('btnModeSpk').disabled = true;
+    try {
+      await window.SwitchMode(m);
+      toast(m === 'speaker' ? '已切到喇叭模式:把系统声音输出切到虚拟声卡,手机点「喇叭」收听' : '已切回麦克风模式');
+    } catch (e) {
+      toast('切换模式失败: ' + e, true);
+    } finally {
+      modeBusy = false;
+      $('btnModeMic').disabled = false;
+      $('btnModeSpk').disabled = false;
+      poll();
+    }
+  }
+  $('btnModeMic').onclick = () => switchMode('mic');
+  $('btnModeSpk').onclick = () => switchMode('speaker');
   $('btnRefresh').onclick = () => refreshDevices($('devSelect').value);
   $('btnSwitch').onclick = async () => {
     const name = $('devSelect').value;

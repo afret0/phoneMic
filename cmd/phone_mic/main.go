@@ -126,6 +126,7 @@ func main() {
 	app := ui.NewApp(srv, mgr, upd, *device, *httpsAddr, *httpAddr, stop)
 	srv.ListDevices = app.ListDevices
 	srv.SwitchDevice = app.SwitchDevice
+	srv.SwitchMode = app.SwitchMode
 	srv.DeviceAuto = app.DeviceAuto
 	go single.WatchQuit(app.Quit)
 	go func() {
@@ -147,6 +148,7 @@ func main() {
 	stop()
 	<-srvDone
 	srv.SetPlayer(nil)
+	srv.SetCapturer(nil)
 	slog.Info("done, 程序已退出")
 }
 

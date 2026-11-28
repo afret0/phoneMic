@@ -77,10 +77,14 @@
 
 ## 契约（改动前必读，均已与用户确认）
 
-- 音频线上格式：48000Hz 单声道 Int16 LE 裸 PCM，WSS 二进制帧；无协议头。
+- 音频线上格式：48000Hz 单声道 Int16 LE 裸 PCM，WSS 二进制帧；无协议头（上行 `/ws` 与下行 `/speaker` 同格式）。
 - 单路推流：新 WS 连接进来即踢旧连接（close 4001）；抖动缓冲目标 100ms、上限 300ms 超限丢最旧。
+- **工作模式（2026-11-28 用户拍板）**：`mic`(手机当麦克风) / `speaker`(手机当电脑喇叭) **互斥**——同一虚拟声卡双向同开会回环啸叫；speaker 时**仅手机出声**（不做本机转发）；**两端都可切**（桌面模式卡片 + 手机模式分段钮，HTTP `/mode` GET/POST {"mode":"mic|speaker"}，POST 走 SwitchMode：先建设备成功才切，失败 409 不改模式）；**跨模式新连接一律踢旧**（4001 终态），方向不符的 `/ws`/`/speaker` 连接直接拒 4001。模式不持久化（内存态，重启回 mic）；手机 UI 空闲时 pollStatus 采纳服务端 mode。
+- 采集（speaker 模式）：`internal/audio/capture.go` malgo Capture 48k/mono/S16，`audio.DefaultCaptureMatch` 按平台文件（mac "blackhole" / win **"cable output"**——VB-Cable 播放端叫 CABLE Input、录音端叫 CABLE Output，别混）；`--device` flag 只影响 mic 播放匹配，capMatch 独立。无收听连接时采集丢弃计 noSinkBytes（节流日志）；回调停滞 3s 看门狗重建；**驱动未安装时 ensureDefaultDevices 会摘除自动匹配的采集器**（与 player 同语义，Null 后端测试要走手动选设备路径）。`/device` POST 回包 current 用 `ActiveDeviceName()`（mic=PlayerName / speaker=CapturerName），别再用 PlayerName（曾致 speaker 模式恒空）。
+- 手机播放缓冲：目标 100ms(9600B) 预缓冲、上限 300ms(28800B) 超限丢最旧（偶数字节对齐）、欠载重新 prime；Android `SpeakerBuffer`（speaker_buffer.kt，单测 speaker_buffer_test.kt 守 prime 阈值/丢最旧/精确排空+重新 prime/任意分块逐位一致）+ AudioTrack 48k USAGE_MEDIA；网页 AudioContext 48k createBuffer + 25ms 调度 timer、horizon 0.12s。播放侧 v1 无漂移 ppm 微调（300ms 上限兜底）；音量增强双模式生效，AGC/低延迟仅 mic。
+- Android FGS：manifest type "microphone|mediaPlayback" + FOREGROUND_SERVICE_MEDIA_PLAYBACK 权限；startMic 带 mode extra，服务按模式选 MICROPHONE/MEDIA_PLAYBACK 类型与 MicEngine/SpeakerEngine；speaker 启动不请求 RECORD_AUDIO。重连循环抽成 `runSession`（mic_stream.kt）双引擎共用，4001/退避语义不变；`parseStatus` 含 mode 字段。
 - 证书：程序内置自签 CA（certs/ 目录持久化，SAN 含全部本机非回环 IP），HTTP :8080/ca.crt 供手机安装；不依赖 mkcert/caddy。
 - 桌面对外地址（2026-11-25 用户拍板，两轮）：地址列表/二维码/CA 链接一律走 `certs.ReachableIPv4s()`——剔除 169.254 链路本地后按档稳定排序：出口 IP（`net.Dial("udp","8.8.8.8:80")` 取 LocalAddr，不发包；非私网如 Clash TUN 198.18 段则弃用）> 192.168/16 > 其它私网 > 其余；二维码取第一个。证书 SAN 仍用 `LocalIPv4s()` 含全部非回环 IP，不受影响。**注意 `net.ParseIP` 返回 16 字节表示，按字节判网段必须先 `To4()`**。
 - mDNS 广播（2026-11-25 用户拍板）：`zeroconf.RegisterProxy` 只广播 `ReachableIPv4s()` 首位**一个** IP（所有网卡仍应答，TXT 契约不变，旧 app 也修好）——默认 `Register` 会把 Docker/WSL 等全部网卡 IP 塞进 A 记录，Android 随机挑一个导致连 172.17.0.1。**「按收包网卡回地址」方案不可行**：x/net ipv4 的 Windows `setControlMessage` 是空实现（errNotImplemented），收包 IfIndex 恒 0，会让 Windows 一条 A 记录都不回。host 仍用 `os.Hostname()`（与旧版一致，中文主机名实测可解析）。
-- 虚拟声卡名匹配：mac 找 "BlackHole"，win 找 "VB-Cable"/"CABLE Output"；找不到报错并提示 --install-driver，绝不静默落到扬声器（会啸叫）。
+- 虚拟声卡名匹配：mic 播放 mac 找 "BlackHole"、win 找 "VB-Cable"/"CABLE Input"；speaker 采集见上（win "CABLE Output"）；找不到报错并提示 --install-driver，绝不静默落到扬声器（会啸叫）。
 - 驱动安装源：mac 用 brew cask API（formulae.brew.sh/api/cask/blackhole-2ch.json）取官方 pkg URL+sha256 校验后 installer 安装（卸载=删 /Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver；装/卸后均需重启电脑生效）；win 用 vb-audio 官方 VBCABLE_Driver_Pack zip，UAC 提权跑官方 setup。

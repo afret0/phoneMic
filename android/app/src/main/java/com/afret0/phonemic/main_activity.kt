@@ -132,6 +132,7 @@ private fun fmtDur(sec: Long): String = String.format("%02d:%02d", sec / 60, sec
 fun App() {
     val ctx = LocalContext.current
     val phase by MicState.phase.collectAsStateWithLifecycle()
+    val mode by MicState.mode.collectAsStateWithLifecycle()
     val servers by MicState.servers.collectAsStateWithLifecycle()
     val selected by MicState.selected.collectAsStateWithLifecycle()
     val active = phase is Phase.Connecting || phase is Phase.Streaming || phase is Phase.Reconnecting
@@ -142,9 +143,35 @@ fun App() {
     var scanning by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableIntStateOf(0) }
     var doDiscovery by remember { mutableStateOf<Discovery?>(null) }
+    var modeBusy by remember { mutableStateOf(false) }
     var updInfo by remember { mutableStateOf<AppUpdate?>(null) }
     var updChecking by remember { mutableStateOf(false) }
     var updDownloading by remember { mutableStateOf(false) }
+    val modeScope = rememberCoroutineScope()
+
+    fun adoptPcStatus(st: PcStatus) {
+        MicState.pcStatus.value = st
+        if (!modeBusy) MicState.mode.value = parseMode(st.mode)
+    }
+
+    fun switchMode(m: StreamMode) {
+        if (modeBusy || m == MicState.mode.value) return
+        android.util.Log.i("Mode", "hit, 工作模式切换, old: ${MicState.mode.value}, new: $m")
+        if (active) stopMic(ctx)
+        MicState.mode.value = m
+        val srv = selected ?: return
+        modeBusy = true
+        localErr = null
+        modeScope.launch {
+            val r = runCatching { switchPcMode(ctx, srv, m) }
+            modeBusy = false
+            r.onFailure { e ->
+                android.util.Log.e("Mode", "fail, host: ${srv.host}, mode: $m, err: ${e.message ?: e.toString()}")
+                localErr = "切换模式失败: " + (e.message ?: e.toString())
+            }
+            runCatching { fetchPcStatus(ctx, srv) }.onSuccess { adoptPcStatus(it) }
+        }
+    }
 
     fun startUpdateDownload(u: AppUpdate) {
         if (updDownloading) return
@@ -213,6 +240,13 @@ fun App() {
             doDiscovery?.refresh(false)
         }
     }
+    LaunchedEffect(active, selected) {
+        while (!active && isActive) {
+            val srv = selected
+            if (srv != null) runCatching { fetchPcStatus(ctx, srv) }.onSuccess { adoptPcStatus(it) }
+            delay(5000)
+        }
+    }
     LaunchedEffect(Unit) {
         val p = prefs(ctx)
         val host = p.getString("last_host", null)
@@ -246,10 +280,15 @@ fun App() {
             Spacer(Modifier.width(12.dp))
             Column {
                 Text("phoneMic", color = Fg, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                Text("这台手机，就是电脑的无线麦克风", color = Muted, fontSize = 12.5.sp)
+                Text(
+                    if (mode == StreamMode.Speaker) "这台手机，就是电脑的无线喇叭" else "这台手机，就是电脑的无线麦克风",
+                    color = Muted, fontSize = 12.5.sp,
+                )
             }
         }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
+        ModeSeg(mode, modeBusy) { switchMode(it) }
+        Spacer(Modifier.height(14.dp))
 
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             MicButton(phase) {
@@ -259,7 +298,9 @@ fun App() {
                     val srv = selected
                     if (srv == null) {
                         localErr = "先在下方选择或输入电脑地址"
-                    } else if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    } else if (mode == StreamMode.Mic &&
+                        ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+                    ) {
                         pendingSrv = srv
                         micLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     } else if (Build.VERSION.SDK_INT >= 33 &&
@@ -276,9 +317,9 @@ fun App() {
         Spacer(Modifier.height(10.dp))
         Text(
             when (phase) {
-                Phase.Idle -> "点击开始收音"
+                Phase.Idle -> if (mode == StreamMode.Speaker) "点击开始收听" else "点击开始收音"
                 Phase.Connecting -> "正在连接电脑…"
-                Phase.Streaming -> "正在收音 · 点击停止"
+                Phase.Streaming -> if (mode == StreamMode.Speaker) "正在收听 · 点击停止" else "正在收音 · 点击停止"
                 is Phase.Reconnecting -> "连接断开 · 自动重连中"
                 is Phase.Failed -> "已停止"
             },
@@ -436,9 +477,66 @@ fun MicGlyph(size: androidx.compose.ui.unit.Dp, tint: Color) {
 }
 
 @Composable
+fun SpkGlyph(size: androidx.compose.ui.unit.Dp, tint: Color) {
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension / 64f
+        val p = androidx.compose.ui.graphics.Path().apply {
+            moveTo(12 * s, 25 * s)
+            lineTo(22 * s, 25 * s)
+            lineTo(34 * s, 14 * s)
+            lineTo(34 * s, 50 * s)
+            lineTo(22 * s, 39 * s)
+            lineTo(12 * s, 39 * s)
+            close()
+        }
+        drawPath(p, tint)
+        drawArc(
+            tint, -55f, 110f, false, topLeft = Offset(30 * s, 22 * s), size = Size(20 * s, 20 * s),
+            style = Stroke(3.6f * s, cap = StrokeCap.Round),
+        )
+        drawArc(
+            tint, -55f, 110f, false, topLeft = Offset(34 * s, 15 * s), size = Size(32 * s, 34 * s),
+            style = Stroke(3.6f * s, cap = StrokeCap.Round),
+        )
+    }
+}
+
+@Composable
+fun ModeSeg(mode: StreamMode, busy: Boolean, onPick: (StreamMode) -> Unit) {
+    val spk = mode == StreamMode.Speaker
+    Column {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(CardBg).padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            listOf(StreamMode.Mic to "手机当麦克风", StreamMode.Speaker to "手机当喇叭").forEach { (m, label) ->
+                val sel = mode == m
+                Row(
+                    Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(11.dp))
+                        .background(if (sel) Indigo else Color.Transparent)
+                        .clickable(enabled = !busy) { onPick(m)},
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (m == StreamMode.Mic) MicGlyph(15.dp, if (sel) Fg else Muted) else SpkGlyph(16.dp, if (sel) Fg else Muted)
+                    Spacer(Modifier.width(6.dp))
+                    Text(label, color = if (sel) Fg else Muted, fontSize = 13.5.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium)
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (spk) "电脑声音只从手机出声 · 先把电脑系统输出切到虚拟声卡" else "手机收音给电脑 · 会议 App 麦克风选虚拟声卡",
+            color = Muted, fontSize = 11.5.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
 fun MicButton(phase: Phase, onClick: () -> Unit) {
     val streaming = phase is Phase.Streaming
     val connecting = phase is Phase.Connecting || phase is Phase.Reconnecting
+    val mode by MicState.mode.collectAsStateWithLifecycle()
     val level by MicState.level.collectAsStateWithLifecycle()
     val glow = (level * 2.2f).coerceIn(0f, 1f)
     val infinite = androidx.compose.animation.core.rememberInfiniteTransition()
@@ -484,7 +582,7 @@ fun MicButton(phase: Phase, onClick: () -> Unit) {
                         cornerRadius = CornerRadius(size.minDimension * 0.12f, size.minDimension * 0.12f),
                     )
                 }
-                else -> MicGlyph(52.dp, Fg)
+                else -> if (mode == StreamMode.Speaker) SpkGlyph(52.dp, Fg) else MicGlyph(52.dp, Fg)
             }
         }
     }
@@ -493,6 +591,7 @@ fun MicButton(phase: Phase, onClick: () -> Unit) {
 @Composable
 fun StatusPill(phase: Phase) {
     val startedAt by MicState.startedAt.collectAsStateWithLifecycle()
+    val mode by MicState.mode.collectAsStateWithLifecycle()
     val active = phase is Phase.Connecting || phase is Phase.Streaming || phase is Phase.Reconnecting
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(active) {
@@ -511,7 +610,7 @@ fun StatusPill(phase: Phase) {
     val label = when (phase) {
         Phase.Idle -> "未连接"
         Phase.Connecting -> "连接中"
-        Phase.Streaming -> "推流中"
+        Phase.Streaming -> if (mode == StreamMode.Speaker) "收听中" else "推流中"
         is Phase.Reconnecting -> "重连中·第${phase.attempt}次"
         is Phase.Failed -> "已停止"
     }
@@ -531,6 +630,7 @@ fun StatusPill(phase: Phase) {
 
 @Composable
 fun LevelCard() {
+    val mode by MicState.mode.collectAsStateWithLifecycle()
     val bars = remember { ArrayDeque(List(64) { 0f }) }
     var tick by remember { mutableIntStateOf(0) }
     var smooth by remember { mutableFloatStateOf(0f) }
@@ -550,7 +650,7 @@ fun LevelCard() {
         Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CardBg).padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("声音采集电平", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(if (mode == StreamMode.Speaker) "收听电平" else "声音采集电平", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.weight(1f))
             Text(dbText, color = Muted, fontSize = 12.5.sp)
         }
@@ -580,6 +680,7 @@ fun LevelCard() {
 @Composable
 fun SoundCard() {
     val ctx = LocalContext.current
+    val mode by MicState.mode.collectAsStateWithLifecycle()
     val gain by MicState.gain.collectAsStateWithLifecycle()
     val agcOn by MicState.agcOn.collectAsStateWithLifecycle()
     val agcAvail by MicState.agcAvailable.collectAsStateWithLifecycle()
@@ -604,49 +705,51 @@ fun SoundCard() {
                 inactiveTrackColor = Color(0xFF27273B),
             ),
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("自动增益", color = Fg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text("小声自动放大，环境声也会被拉大", color = Muted, fontSize = 11.5.sp)
+        if (mode == StreamMode.Mic) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("自动增益", color = Fg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("小声自动放大，环境声也会被拉大", color = Muted, fontSize = 11.5.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Switch(
+                    checked = agcOn,
+                    onCheckedChange = {
+                        MicState.agcOn.value = it
+                        saveAgc(ctx, it)
+                    },
+                    enabled = agcAvail,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Fg, checkedTrackColor = Indigo,
+                        uncheckedThumbColor = Muted, uncheckedTrackColor = Color(0xFF27273B),
+                        uncheckedBorderColor = BorderC,
+                    ),
+                )
             }
-            Spacer(Modifier.width(10.dp))
-            Switch(
-                checked = agcOn,
-                onCheckedChange = {
-                    MicState.agcOn.value = it
-                    saveAgc(ctx, it)
-                },
-                enabled = agcAvail,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Fg, checkedTrackColor = Indigo,
-                    uncheckedThumbColor = Muted, uncheckedTrackColor = Color(0xFF27273B),
-                    uncheckedBorderColor = BorderC,
-                ),
-            )
-        }
-        if (!agcAvail) {
-            Spacer(Modifier.height(6.dp))
-            Text("此设备不支持自动增益，可拖动上方滑杆", color = Amber, fontSize = 11.5.sp)
-        }
-        Spacer(Modifier.height(10.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("低延迟模式", color = Fg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                Text("电脑缓冲 100→50ms，重连后生效，弱 WiFi 易卡顿", color = Muted, fontSize = 11.5.sp)
+            if (!agcAvail) {
+                Spacer(Modifier.height(6.dp))
+                Text("此设备不支持自动增益，可拖动上方滑杆", color = Amber, fontSize = 11.5.sp)
             }
-            Spacer(Modifier.width(10.dp))
-            Switch(
-                checked = lowLat,
-                onCheckedChange = {
-                    MicState.lowLatency.value = it
-                    saveLowLat(ctx, it)
-                },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Fg, checkedTrackColor = Indigo,
-                    uncheckedThumbColor = Muted, uncheckedTrackColor = Color(0xFF27273B),
-                    uncheckedBorderColor = BorderC,
-                ),
-            )
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("低延迟模式", color = Fg, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("电脑缓冲 100→50ms，重连后生效，弱 WiFi 易卡顿", color = Muted, fontSize = 11.5.sp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Switch(
+                    checked = lowLat,
+                    onCheckedChange = {
+                        MicState.lowLatency.value = it
+                        saveLowLat(ctx, it)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Fg, checkedTrackColor = Indigo,
+                        uncheckedThumbColor = Muted, uncheckedTrackColor = Color(0xFF27273B),
+                        uncheckedBorderColor = BorderC,
+                    ),
+                )
+            }
         }
     }
 }
@@ -759,9 +862,12 @@ fun Tile(title: String, value: String, modifier: Modifier = Modifier, onClick: (
 fun Tiles() {
     val ctx = LocalContext.current
     val myName = remember { localDeviceName(ctx) }
+    val mode by MicState.mode.collectAsStateWithLifecycle()
     val pc by MicState.pcStatus.collectAsStateWithLifecycle()
     val selected by MicState.selected.collectAsStateWithLifecycle()
     val sent by MicState.sentBytes.collectAsStateWithLifecycle()
+    val received by MicState.receivedBytes.collectAsStateWithLifecycle()
+    val spkBuf by MicState.spkBufferedMs.collectAsStateWithLifecycle()
     val rate by MicState.deviceRate.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var devOpen by remember { mutableStateOf(false) }
@@ -791,23 +897,27 @@ fun Tiles() {
         rate == 48000 -> "48 kHz"
         else -> String.format("%.1f → 48 kHz", rate / 1000.0)
     }
+    val spk = mode == StreamMode.Speaker
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Tile("本机", myName, Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Tile(
-                "声音写入设备(虚拟声卡)",
+                if (spk) "声音采集设备(虚拟声卡)" else "声音写入设备(虚拟声卡)",
                 if (pc?.device.isNullOrEmpty()) "点按选择" else pc!!.device,
                 Modifier.weight(1f),
             ) { devOpen = true }
-            Tile("电脑缓冲", "${pc?.bufferedMs ?: 0} ms", Modifier.weight(1f))
+            if (spk) Tile("本机缓冲", "$spkBuf ms", Modifier.weight(1f))
+            else Tile("电脑缓冲", "${pc?.bufferedMs ?: 0} ms", Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Tile("已发送", fmtBytes(sent), Modifier.weight(1f))
-            Tile("采样率", rateText, Modifier.weight(1f))
+            if (spk) Tile("已接收", fmtBytes(received), Modifier.weight(1f))
+            else Tile("已发送", fmtBytes(sent), Modifier.weight(1f))
+            Tile("采样率", if (spk) "48 kHz" else rateText, Modifier.weight(1f))
         }
     }
     if (devOpen) {
         DevicePickDialog(
+            mode = mode,
             list = devList, err = devErr, busy = devBusy,
             onRefresh = { devTick++ },
             onPick = { name ->
@@ -821,7 +931,7 @@ fun Tiles() {
                         devList = fetchPcDevices(ctx, srv)
                     } catch (e: Exception) {
                         android.util.Log.e("PcDevice", "fail, 设备切换失败, host: ${srv.host}, name: $name, err: ${e.message ?: e.toString()}")
-                        devErr = "切换声音写入设备失败: " + (e.message ?: e.toString())
+                        devErr = (if (mode == StreamMode.Speaker) "切换声音采集设备失败: " else "切换声音写入设备失败: ") + (e.message ?: e.toString())
                     }
                     devBusy = false
                 }
@@ -833,14 +943,16 @@ fun Tiles() {
 
 @Composable
 fun DevicePickDialog(
+    mode: StreamMode,
     list: PcDeviceList?, err: String?, busy: Boolean,
     onRefresh: () -> Unit, onPick: (String) -> Unit, onDismiss: () -> Unit,
 ) {
     val selName = pickedDeviceName(list)
+    val spk = mode == StreamMode.Speaker
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CardBg,
-        title = { Text("选择声音写入设备", color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
+        title = { Text(if (spk) "选择声音采集设备" else "选择声音写入设备", color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 if (list == null && err == null) Text("加载中…", color = Muted, fontSize = 13.sp)
@@ -857,7 +969,8 @@ fun DevicePickDialog(
                 if (list != null && list.current.isNotEmpty() && !isVirtualDevice(list.current)) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "正在写入物理扬声器：手机声音会从音响外放，可能被手机再次拾取产生啸叫。建议选虚拟声卡。",
+                        if (spk) "正在采集物理麦克风：发给手机的是这支麦克风的拾音，不是电脑播放的声音。建议选虚拟声卡。"
+                        else "正在写入物理扬声器：手机声音会从音响外放，可能被手机再次拾取产生啸叫。建议选虚拟声卡。",
                         color = Amber, fontSize = 12.sp,
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
                             .background(Amber.copy(alpha = 0.10f)).padding(10.dp),

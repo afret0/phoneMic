@@ -42,10 +42,13 @@ class MicService : Service() {
                 val httpPort = intent.getIntExtra("httpPort", 8080)
                 val name = intent.getStringExtra("name") ?: host
                 val srv = Srv(name, host, port, httpPort)
+                val mode = parseMode(intent.getStringExtra("mode") ?: "mic")
+                MicState.mode.value = mode
+                val fgsType = if (mode == StreamMode.Speaker) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 ensureChannel()
                 ServiceCompat.startForeground(
                     this, NOTIF_ID, buildNotification("正在连接电脑…"),
-                    if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0,
+                    if (Build.VERSION.SDK_INT >= 29) fgsType else 0,
                 )
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phonemic:mic").apply { acquire(4 * 60 * 60 * 1000L) }
@@ -54,7 +57,7 @@ class MicService : Service() {
                     setReferenceCounted(false)
                     acquire()
                 }
-                Log.i(TAG, "recv, 前台服务启动, host: $host, port: $port")
+                Log.i(TAG, "recv, 前台服务启动, host: $host, port: $port, mode: $mode")
                 Log.i(TAG, "hit, WiFi 高性能锁已持有, 防省电模式引入延迟抖动")
                 scope.launch {
                     while (isActive) {
@@ -65,7 +68,7 @@ class MicService : Service() {
                 }
                 scope.launch { MicState.phase.collect { updateNotification(phaseText(it)) } }
                 scope.launch {
-                    MicEngine(this@MicService).run(srv)
+                    if (mode == StreamMode.Speaker) SpeakerEngine(this@MicService).run(srv) else MicEngine(this@MicService).run(srv)
                     stopSelf()
                 }
             }
@@ -84,7 +87,7 @@ class MicService : Service() {
     private fun phaseText(p: Phase): String = when (p) {
         Phase.Idle -> "已停止"
         Phase.Connecting -> "正在连接电脑…"
-        Phase.Streaming -> "正在推流 · 点击打开"
+        Phase.Streaming -> if (MicState.mode.value == StreamMode.Speaker) "正在收听电脑声音 · 点击打开" else "正在推流 · 点击打开"
         is Phase.Reconnecting -> "重连中(第${p.attempt}次) · ${p.reason}"
         is Phase.Failed -> p.msg
     }
@@ -134,6 +137,7 @@ fun startMic(ctx: Context, srv: Srv) {
     val i = Intent(ctx, MicService::class.java).setAction("start")
         .putExtra("host", srv.host).putExtra("port", srv.port)
         .putExtra("httpPort", srv.httpPort).putExtra("name", srv.name)
+        .putExtra("mode", if (MicState.mode.value == StreamMode.Speaker) "speaker" else "mic")
     ContextCompat.startForegroundService(ctx, i)
 }
 
