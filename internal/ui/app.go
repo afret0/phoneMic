@@ -15,6 +15,7 @@ import (
 	"github.com/afret0/phoneMic/internal/driver"
 	"github.com/afret0/phoneMic/internal/server"
 	"github.com/afret0/phoneMic/internal/update"
+	"github.com/afret0/phoneMic/internal/usb"
 	"github.com/afret0/phoneMic/internal/version"
 	qrcode "github.com/skip2/go-qrcode"
 	webview "github.com/webview/webview_go"
@@ -35,6 +36,8 @@ type StateView struct {
 	Version   string         `json:"version"`
 	OS        string         `json:"os"`
 	Update    update.State   `json:"update"`
+	USB       usb.State      `json:"usb"`
+	USBURL    string         `json:"usbUrl"`
 }
 
 const playerStallTimeout = 3 * time.Second
@@ -43,6 +46,7 @@ type App struct {
 	srv       *server.Server
 	mgr       *driver.Manager
 	upd       *update.Manager
+	usb       *usb.Manager
 	httpsAddr string
 	httpAddr  string
 	quitFn    func()
@@ -66,8 +70,8 @@ type App struct {
 	hook windowHook
 }
 
-func NewApp(srv *server.Server, mgr *driver.Manager, upd *update.Manager, match, httpsAddr, httpAddr string, quit func()) *App {
-	return &App{srv: srv, mgr: mgr, upd: upd, match: match, capMatch: audio.DefaultCaptureMatch, httpsAddr: httpsAddr, httpAddr: httpAddr, quitFn: quit}
+func NewApp(srv *server.Server, mgr *driver.Manager, upd *update.Manager, usbMgr *usb.Manager, match, httpsAddr, httpAddr string, quit func()) *App {
+	return &App{srv: srv, mgr: mgr, upd: upd, usb: usbMgr, match: match, capMatch: audio.DefaultCaptureMatch, httpsAddr: httpsAddr, httpAddr: httpAddr, quitFn: quit}
 }
 
 func (a *App) Run() {
@@ -141,6 +145,10 @@ func (a *App) getState() (StateView, error) {
 	if runtime.GOOS == "windows" {
 		mic = "CABLE Output (VB-Audio Virtual Cable)"
 	}
+	var usbURL string
+	if _, httpsPort, err := net.SplitHostPort(a.httpsAddr); err == nil {
+		usbURL = "https://127.0.0.1:" + httpsPort
+	}
 	return StateView{
 		Driver:    a.mgr.State(),
 		Status:    a.srv.Status(),
@@ -151,6 +159,8 @@ func (a *App) getState() (StateView, error) {
 		Version:   version.Version,
 		OS:        runtime.GOOS,
 		Update:    a.upd.State(),
+		USB:       a.usb.State(),
+		USBURL:    usbURL,
 	}, nil
 }
 

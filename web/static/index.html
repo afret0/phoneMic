@@ -127,6 +127,11 @@ header { display: flex; align-items: center; gap: 10px; width: 100%; margin-bott
 .pill.dead .dot { background: var(--danger); }
 @keyframes blink { 50% { opacity: 0.35; } }
 .pill .time { font-variant-numeric: tabular-nums; color: var(--muted-fg); }
+.pill .usbBadge {
+  font-size: 11px; font-weight: 600; color: var(--accent);
+  border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 999px;
+  padding: 1px 8px; letter-spacing: 0.4px;
+}
 
 .card {
   width: 100%; background: var(--card);
@@ -319,6 +324,7 @@ footer { margin-top: 6px; font-size: 11.5px; color: #64748B; text-align: center;
   <div class="pill" id="pill" role="status" aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
     <span id="state">未连接</span>
+    <span class="usbBadge" id="usbBadge" hidden>USB 直连</span>
     <span class="time" id="dur"></span>
   </div>
 
@@ -420,6 +426,7 @@ let spkGain = null, spkBuf = [], spkBufBytes = 0, spkPrimed = false, spkNext = 0
 const SPK_TARGET_BYTES = 9600, SPK_MAX_BYTES = 28800, SPK_HORIZON = 0.12;
 
 $('caLink').href = 'http://' + location.hostname + ':8080/ca.crt';
+if (['127.0.0.1', 'localhost', '[::1]', '::1'].includes(location.hostname)) $('usbBadge').hidden = false;
 $('errClose').onclick = () => { errBox.style.display = 'none'; };
 
 const GAIN_KEY = 'phonemic_gain', AGC_KEY = 'phonemic_agc', LOWLAT_KEY = 'phonemic_lowlat';

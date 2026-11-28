@@ -276,6 +276,16 @@ footer .btn { margin-left: auto; }
     </div>
   </div>
 
+  <div class="card" id="usbCard" style="display:none">
+    <div class="cardHead">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="1"/><circle cx="4" cy="20" r="1"/><path d="M4.7 19.3 19 5"/><path d="m21 3-3 1 2 2Z"/><path d="M9.26 7.68 5 12l2 5"/><path d="m10 14 5 2 3.5-3.5"/></svg>
+      <span class="label">USB 直连</span>
+    </div>
+    <div class="status" id="usbStatus"><span class="dot"></span><span id="usbText">检测中</span></div>
+    <div class="hint" id="usbHint"></div>
+    <div class="banner" id="usbBanner"></div>
+  </div>
+
   <div class="card">
     <div class="cardHead">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
@@ -541,6 +551,34 @@ footer .btn { margin-left: auto; }
     show($('btnUpdPage'), !u.busy);
   }
 
+  function renderUsb(u, usbUrl) {
+    const card = $('usbCard');
+    if (!u || !u.supported) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    const devs = u.devices || [], ready = u.ready || [];
+    let cls = '', text = '', hint = '';
+    if (ready.length) {
+      cls = 'ok'; text = 'USB 直连已就绪 · ' + ready.join(', ');
+      hint = '手机 app 会自动出现「USB 直连」入口' + (usbUrl ? ';手机浏览器也可打开 ' + usbUrl : '');
+    } else if (devs.some(d => d.state === 'unauthorized')) {
+      cls = 'warn'; text = '手机待授权 USB 调试';
+      hint = '在手机弹出的「允许 USB 调试」窗口点允许(可勾选一律允许)';
+    } else if (devs.some(d => d.state === 'device')) {
+      cls = u.lastError ? 'bad' : 'busy';
+      text = u.lastError ? '隧道建立失败' : '正在建立隧道…';
+      hint = '反复失败时重插数据线(手机上选「传输文件」模式)';
+    } else {
+      text = '未检测到 USB 设备';
+      hint = '手机开启 USB 调试后用数据线连电脑,隧道会自动建立,无需网络互通';
+    }
+    $('usbStatus').className = 'status ' + cls;
+    $('usbText').textContent = text;
+    $('usbHint').textContent = hint;
+    const banner = $('usbBanner');
+    if (u.lastError) { banner.className = 'banner err show'; banner.textContent = u.lastError; }
+    else { banner.className = 'banner'; banner.textContent = ''; }
+  }
+
   function renderRate(d, dev) {
     const el = $('rateWarn');
     const show = curMode !== 'speaker' && d && d.cableRate && d.cableRate !== 48000 && isVirtual(dev.current);
@@ -568,6 +606,7 @@ footer .btn { margin-left: auto; }
       renderDevice(s.device || {});
       renderRate(s.driver, s.device || {});
       renderUpdate(s.update || {});
+      renderUsb(s.usb, s.usbUrl);
       renderEndpoints(s.endpoints, s.certUrl);
       if (!devicesLoaded) refreshDevices(s.device && s.device.current ? s.device.current : '');
     } catch (e) {

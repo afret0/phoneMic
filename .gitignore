@@ -9,3 +9,4 @@ android/app/build/
 android/app/bin/
 android/local.properties
 *.apk
+!internal/usb/adb_assets/adb.exe

@@ -147,6 +147,7 @@ fun App() {
     var updInfo by remember { mutableStateOf<AppUpdate?>(null) }
     var updChecking by remember { mutableStateOf(false) }
     var updDownloading by remember { mutableStateOf(false) }
+    var usbSrv by remember { mutableStateOf<Srv?>(null) }
     val modeScope = rememberCoroutineScope()
 
     fun adoptPcStatus(st: PcStatus) {
@@ -244,6 +245,28 @@ fun App() {
         while (!active && isActive) {
             val srv = selected
             if (srv != null) runCatching { fetchPcStatus(ctx, srv) }.onSuccess { adoptPcStatus(it) }
+            delay(5000)
+        }
+    }
+    LaunchedEffect(active) {
+        while (!active && isActive) {
+            val found = probeUsbServer(ctx)
+            if (found != null && usbSrv == null) {
+                android.util.Log.i("Usb", "done, USB 直连入口已出现, host: ${found.host}")
+                if (shouldAutoSelectUsb(MicState.selected.value, found)) {
+                    MicState.selected.value = found
+                    persistSelected(ctx, found)
+                }
+            }
+            if (found == null && usbSrv != null) {
+                android.util.Log.i("Usb", "hit, USB 直连入口已消失")
+                if (shouldClearUsb(MicState.selected.value, false)) {
+                    MicState.selected.value = null
+                    prefs(ctx).edit().remove("last_host").remove("last_name")
+                        .remove("last_port").remove("last_http").apply()
+                }
+            }
+            usbSrv = found
             delay(5000)
         }
     }
@@ -351,7 +374,7 @@ fun App() {
         LevelCard()
         Spacer(Modifier.height(12.dp))
         if (!active) {
-            ServerCard(servers, selected, manualText, { manualText = it }, {
+            ServerCard(servers, usbSrv, selected, manualText, { manualText = it }, {
                 MicState.selected.value = it
                 persistSelected(ctx, it)
             }, {
@@ -756,7 +779,7 @@ fun SoundCard() {
 
 @Composable
 fun ServerCard(
-    servers: List<Srv>, selected: Srv?, manualText: String,
+    servers: List<Srv>, usbSrv: Srv?, selected: Srv?, manualText: String,
     onManualChange: (String) -> Unit, onSelect: (Srv) -> Unit, onManualOk: () -> Unit,
     onRefresh: () -> Unit, onScan: () -> Unit,
 ) {
@@ -778,8 +801,25 @@ fun ServerCard(
             )
         }
         Spacer(Modifier.height(10.dp))
-        if (servers.isEmpty()) {
-            Text("同一 WiFi 下自动搜索中… 可扫码、手动输入 IP 或点刷新", color = Muted, fontSize = 13.sp)
+        if (servers.isEmpty() && usbSrv == null) {
+            Text("同一 WiFi 下自动搜索中… 可扫码、手动输入 IP、插 USB 数据线或点刷新", color = Muted, fontSize = 13.sp)
+        }
+        usbSrv?.let { srv ->
+            val sel = selected?.host == srv.host && selected.port == srv.port
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                    .background(if (sel) Green.copy(alpha = 0.10f) else Color.Transparent)
+                    .clickable { onSelect(srv) }.padding(horizontal = 10.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(if (sel) Green else Muted))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(srv.name, color = Fg, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("数据线隧道 · ${srv.host}:${srv.port}", color = Muted, fontSize = 12.sp)
+                }
+                if (sel) Text("✓", color = Green, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
         }
         servers.forEach { srv ->
             val sel = selected?.host == srv.host && selected.port == srv.port

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 
 	"github.com/afret0/phoneMic/internal/audio"
@@ -20,6 +21,7 @@ import (
 	"github.com/afret0/phoneMic/internal/single"
 	"github.com/afret0/phoneMic/internal/ui"
 	"github.com/afret0/phoneMic/internal/update"
+	"github.com/afret0/phoneMic/internal/usb"
 )
 
 func main() {
@@ -87,6 +89,16 @@ func main() {
 	}
 	server.InitComputerName(filepath.Join(dataDir, "phoneMic"))
 
+	var usbPorts []int
+	for _, addr := range []string{*httpsAddr, *httpAddr} {
+		if _, p, err := net.SplitHostPort(addr); err == nil {
+			if n, err := strconv.Atoi(p); err == nil {
+				usbPorts = append(usbPorts, n)
+			}
+		}
+	}
+	usbMgr := usb.NewManager(filepath.Join(dataDir, "phoneMic", "usb"), usbPorts...)
+
 	type playerResult struct {
 		p   *audio.Player
 		err error
@@ -122,8 +134,9 @@ func main() {
 
 	upd := update.NewManager()
 	upd.TriggerCheck()
+	go usbMgr.Run(ctx)
 
-	app := ui.NewApp(srv, mgr, upd, *device, *httpsAddr, *httpAddr, stop)
+	app := ui.NewApp(srv, mgr, upd, usbMgr, *device, *httpsAddr, *httpAddr, stop)
 	srv.ListDevices = app.ListDevices
 	srv.SwitchDevice = app.SwitchDevice
 	srv.SwitchMode = app.SwitchMode
